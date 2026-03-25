@@ -1,5 +1,5 @@
 dhanhq>=2.0
-tradingagents>=0.1.0
+tradingagents @ git+https://github.com/tauricresearch/tradingagents.git
 pandas-ta>=0.3.14b1
 pandas>=2.0
 supabase>=2.0
