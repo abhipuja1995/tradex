@@ -112,6 +112,13 @@ class TradingEngine:
         self.risk_manager.clear_pause()
         logger.info("Trading engine resumed")
 
+    def update_dhan_token(self, token: str):
+        """Update Dhan access token (called from postback endpoint)."""
+        settings.dhan_access_token = token
+        if self.openalgo:
+            # OpenAlgo handles broker auth, but update settings for direct Dhan calls
+            logger.info("Dhan token updated in engine settings")
+
     # --- Main Loops ---
 
     async def _scan_loop(self):

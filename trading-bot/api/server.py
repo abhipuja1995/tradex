@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from datetime import date
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Micro-Trading Bot API", version="0.1.0")
 
@@ -39,6 +44,48 @@ def get_engine():
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+# --- Dhan Token Postback ---
+
+@app.get("/api/dhan/callback")
+async def dhan_callback(request: Request):
+    """
+    Dhan OAuth postback URL.
+    After login at https://login.dhan.co, Dhan redirects here with the access token.
+    Set this URL in your Dhan Developer Console as the Postback URL.
+    """
+    token = request.query_params.get("access_token") or request.query_params.get("token")
+
+    if not token:
+        return HTMLResponse(
+            "<h2>❌ No token received</h2><p>Check Dhan redirect parameters.</p>",
+            status_code=400,
+        )
+
+    # Update the in-memory settings
+    from config.settings import settings
+    settings.dhan_access_token = token
+
+    # Also set as env var so child processes see it
+    os.environ["DHAN_ACCESS_TOKEN"] = token
+
+    logger.info(f"Dhan access token updated via postback (length={len(token)})")
+
+    # If engine exists, update its broker client
+    if _engine is not None:
+        try:
+            _engine.update_dhan_token(token)
+            logger.info("Engine broker client updated with new Dhan token")
+        except Exception as e:
+            logger.warning(f"Could not update engine with new token: {e}")
+
+    return HTMLResponse(
+        "<h2>✅ Dhan Token Received</h2>"
+        "<p>Access token has been updated. The trading bot will use this token for today's session.</p>"
+        f"<p>Token length: {len(token)} chars</p>"
+        "<p>You can close this window.</p>",
+    )
 
 
 @app.get("/api/status")
