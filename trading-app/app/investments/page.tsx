@@ -1,18 +1,35 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, Component, ReactNode } from "react";
+
+// ── Error Boundary ──────────────────────────────────────────────────────────
+
+class SectionErrorBoundary extends Component<
+  { children: ReactNode; fallback?: string },
+  { hasError: boolean; error: string }
+> {
+  constructor(props: { children: ReactNode; fallback?: string }) {
+    super(props);
+    this.state = { hasError: false, error: "" };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error: error.message };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="glass-panel" style={{ padding: "2rem", textAlign: "center", color: "#f97316", fontSize: "0.85rem" }}>
+          {this.props.fallback || "Error"}: {this.state.error}
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type StockPick = {
-  symbol: string;
-  name: string;
-  price: number;
-  changePercent: number;
-  rsi: number | null;
-  trend: string | null;
-  signal: "BUY" | "HOLD" | "SELL";
-};
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 type BucketConfig = {
   key: string;
@@ -28,63 +45,18 @@ type BucketConfig = {
 // ── Bucket Definitions ─────────────────────────────────────────────────────
 
 const BUCKETS: BucketConfig[] = [
-  {
-    key: "weeks",
-    label: "Weeks",
-    strategy: "Momentum + Options Hedge",
-    targetIRR: "20-30%",
-    maxDrawdown: "<5%",
-    maxCapPerTrade: "5%",
-    optionsAllocation: "2%",
-    cryptoCap: "10%",
-  },
-  {
-    key: "3m",
-    label: "3 Months",
-    strategy: "Swing Breakout + Sector Rotation",
-    targetIRR: "25-35%",
-    maxDrawdown: "<5%",
-    maxCapPerTrade: "5%",
-    optionsAllocation: "2%",
-    cryptoCap: "12%",
-  },
-  {
-    key: "6m",
-    label: "6 Months",
-    strategy: "Trend Following + Value Accumulation",
-    targetIRR: "18-28%",
-    maxDrawdown: "<6%",
-    maxCapPerTrade: "5%",
-    optionsAllocation: "2%",
-    cryptoCap: "12%",
-  },
-  {
-    key: "9m",
-    label: "9 Months",
-    strategy: "Multi-Factor + Dividend Capture",
-    targetIRR: "22-30%",
-    maxDrawdown: "<7%",
-    maxCapPerTrade: "5%",
-    optionsAllocation: "2%",
-    cryptoCap: "15%",
-  },
-  {
-    key: "12m",
-    label: "12 Months",
-    strategy: "Core Satellite + Macro Overlay",
-    targetIRR: "25-40%",
-    maxDrawdown: "<7%",
-    maxCapPerTrade: "5%",
-    optionsAllocation: "2%",
-    cryptoCap: "15%",
-  },
+  { key: "weeks", label: "Weeks", strategy: "Momentum + Options Hedge", targetIRR: "20-30%", maxDrawdown: "<5%", maxCapPerTrade: "5%", optionsAllocation: "2%", cryptoCap: "10%" },
+  { key: "3m", label: "3 Months", strategy: "Swing Breakout + Sector Rotation", targetIRR: "25-35%", maxDrawdown: "<5%", maxCapPerTrade: "5%", optionsAllocation: "2%", cryptoCap: "12%" },
+  { key: "6m", label: "6 Months", strategy: "Trend Following + Value Accumulation", targetIRR: "18-28%", maxDrawdown: "<6%", maxCapPerTrade: "5%", optionsAllocation: "2%", cryptoCap: "12%" },
+  { key: "9m", label: "9 Months", strategy: "Multi-Factor + Dividend Capture", targetIRR: "22-30%", maxDrawdown: "<7%", maxCapPerTrade: "5%", optionsAllocation: "2%", cryptoCap: "15%" },
+  { key: "12m", label: "12 Months", strategy: "Core Satellite + Macro Overlay", targetIRR: "25-40%", maxDrawdown: "<7%", maxCapPerTrade: "5%", optionsAllocation: "2%", cryptoCap: "15%" },
 ];
 
 // ── Shared Styles ──────────────────────────────────────────────────────────
 
 const labelStyle: React.CSSProperties = {
   fontSize: "0.7rem",
-  color: "var(--text-secondary)",
+  color: "#94a3b8",
   textTransform: "uppercase",
   letterSpacing: "0.05em",
   marginBottom: "0.35rem",
@@ -92,17 +64,17 @@ const labelStyle: React.CSSProperties = {
 
 const thStyle: React.CSSProperties = {
   textAlign: "left",
-  padding: "0.4rem 0.6rem",
-  color: "var(--text-secondary)",
+  padding: "0.5rem 0.6rem",
+  color: "#94a3b8",
   fontWeight: 500,
   fontSize: "0.7rem",
   textTransform: "uppercase",
   letterSpacing: "0.05em",
+  borderBottom: "1px solid rgba(255,255,255,0.08)",
 };
 
 const tdStyle: React.CSSProperties = {
-  padding: "0.4rem 0.6rem",
-  color: "var(--text-primary)",
+  padding: "0.5rem 0.6rem",
   fontSize: "0.8rem",
 };
 
@@ -116,12 +88,14 @@ const gradientBorders: Record<string, string> = {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function changeColor(v: number) {
-  return v > 0 ? "var(--success)" : v < 0 ? "var(--danger)" : "var(--text-secondary)";
+function safeNum(v: unknown, fallback = 0): number {
+  if (v == null) return fallback;
+  const n = Number(v);
+  return isNaN(n) ? fallback : n;
 }
 
-function arrow(v: number) {
-  return v > 0 ? "↑" : v < 0 ? "↓" : "–";
+function changeColor(v: number) {
+  return v > 0 ? "#22c55e" : v < 0 ? "#ef4444" : "#94a3b8";
 }
 
 function signalBadge(signal: string): { bg: string; color: string } {
@@ -130,88 +104,90 @@ function signalBadge(signal: string): { bg: string; color: string } {
   return { bg: "rgba(234,179,8,0.12)", color: "#eab308" };
 }
 
-function deriveSignal(trend: string | null, rsi: number | null): "BUY" | "HOLD" | "SELL" {
-  if (!trend && rsi == null) return "HOLD";
-  const isBullTrend = trend?.includes("BULL");
-  const isBearTrend = trend?.includes("BEAR");
-  const isOversold = rsi != null && rsi < 35;
-  const isOverbought = rsi != null && rsi > 70;
-
-  if (isBullTrend && !isOverbought) return "BUY";
-  if (isOversold && !isBearTrend) return "BUY";
-  if (isBearTrend && isOverbought) return "SELL";
-  if (isBearTrend) return "SELL";
-  return "HOLD";
-}
-
-function trendLabel(trend: string | null): string {
-  if (!trend) return "–";
-  if (trend.includes("BULL")) return "ABOVE";
-  if (trend.includes("BEAR")) return "BELOW";
-  return "NEUTRAL";
-}
-
-function trendColor(trend: string | null): string {
-  if (!trend) return "var(--text-secondary)";
-  if (trend.includes("BULL")) return "var(--success)";
-  if (trend.includes("BEAR")) return "var(--danger)";
-  return "var(--text-secondary)";
-}
-
 // ── Main Component ─────────────────────────────────────────────────────────
 
 export default function InvestmentsPage() {
   const [activeBucket, setActiveBucket] = useState("weeks");
-  const [stocks, setStocks] = useState<StockPick[]>([]);
+  const [picks, setPicks] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [killSwitchActive, setKillSwitchActive] = useState(true);
+  const [sendingTelegram, setSendingTelegram] = useState(false);
+  const [telegramStatus, setTelegramStatus] = useState<string | null>(null);
 
   const bucket = BUCKETS.find((b) => b.key === activeBucket)!;
 
-  const fetchStocks = useCallback(async () => {
+  const fetchPicks = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/market/indices");
+      const res = await fetch("/api/market/picks");
       const data = await res.json();
-      // Map indices data (QuoteData + technicals) to stock pick format
-      const indexItems = data.indices || [];
-      const picks: StockPick[] = indexItems.map((item: Record<string, unknown>) => {
-        const trend = (item.trend as string) || null;
-        const rsi = item.rsi != null ? (item.rsi as number) : null;
-        return {
-          symbol: (item.symbol as string) || "",
-          name: (item.name as string) || (item.symbol as string) || "",
-          price: (item.price as number) || 0,
-          changePercent: (item.changePercent as number) || 0,
-          rsi,
-          trend,
-          signal: deriveSignal(trend, rsi),
-        };
-      });
-      setStocks(picks);
+      setPicks(data);
     } catch {
-      setStocks([]);
+      setPicks(null);
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchStocks();
-    const interval = setInterval(fetchStocks, 5 * 60 * 1000);
+    fetchPicks();
+    const interval = setInterval(fetchPicks, 60 * 60 * 1000); // hourly
     return () => clearInterval(interval);
-  }, [fetchStocks]);
+  }, [fetchPicks]);
+
+  const sendToTelegram = async () => {
+    setSendingTelegram(true);
+    setTelegramStatus(null);
+    try {
+      const res = await fetch("/api/notify/telegram", { method: "POST" });
+      const data = await res.json();
+      setTelegramStatus(data.success ? "Sent to Telegram!" : data.message || "Failed to send");
+    } catch {
+      setTelegramStatus("Error sending to Telegram");
+    } finally {
+      setSendingTelegram(false);
+      setTimeout(() => setTelegramStatus(null), 5000);
+    }
+  };
+
+  const indiaPicks: any[] = Array.isArray(picks?.india) ? picks.india : [];
+  const usPicks: any[] = Array.isArray(picks?.us) ? picks.us : [];
+  const goldSetup: any = picks?.gold || null;
 
   return (
     <div className="container">
       {/* Header */}
-      <div style={{ marginBottom: "1.25rem" }}>
-        <h1 className="title" style={{ marginBottom: "0.25rem" }}>
-          Investments
-        </h1>
-        <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>
-          Short-term investment engine with time-bucketed strategies
-        </p>
+      <div style={{ marginBottom: "1.25rem", display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "0.75rem" }}>
+        <div>
+          <h1 className="title" style={{ marginBottom: "0.25rem" }}>Investments</h1>
+          <p style={{ color: "#94a3b8", fontSize: "0.85rem" }}>
+            Top picks with entry/target/SL — Target IRR: 20-30%
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+          {telegramStatus && (
+            <span style={{ fontSize: "0.75rem", color: telegramStatus.includes("Sent") ? "#22c55e" : "#ef4444" }}>
+              {telegramStatus}
+            </span>
+          )}
+          <button
+            onClick={sendToTelegram}
+            disabled={sendingTelegram}
+            style={{
+              background: "rgba(59,130,246,0.15)",
+              color: "#3b82f6",
+              border: "1px solid rgba(59,130,246,0.3)",
+              padding: "0.45rem 1rem",
+              borderRadius: "8px",
+              fontSize: "0.8rem",
+              fontWeight: 600,
+              cursor: sendingTelegram ? "wait" : "pointer",
+              opacity: sendingTelegram ? 0.6 : 1,
+            }}
+          >
+            {sendingTelegram ? "Sending..." : "Send to Telegram"}
+          </button>
+        </div>
       </div>
 
       {/* Time Bucket Tabs */}
@@ -220,7 +196,8 @@ export default function InvestmentsPage() {
           display: "flex",
           gap: "0.25rem",
           marginBottom: "1.5rem",
-          borderBottom: "1px solid var(--border-glass)",
+          borderBottom: "1px solid rgba(255,255,255,0.08)",
+          overflowX: "auto",
         }}
       >
         {BUCKETS.map((b) => (
@@ -228,14 +205,10 @@ export default function InvestmentsPage() {
             key={b.key}
             onClick={() => setActiveBucket(b.key)}
             style={{
-              background: activeBucket === b.key ? "var(--bg-card)" : "transparent",
-              color: activeBucket === b.key ? "var(--text-primary)" : "var(--text-secondary)",
-              border:
-                activeBucket === b.key
-                  ? "1px solid var(--border-glass)"
-                  : "1px solid transparent",
-              borderBottom:
-                activeBucket === b.key ? "1px solid var(--bg-dark)" : "1px solid transparent",
+              background: activeBucket === b.key ? "rgba(255,255,255,0.05)" : "transparent",
+              color: activeBucket === b.key ? "#f1f5f9" : "#94a3b8",
+              border: activeBucket === b.key ? "1px solid rgba(255,255,255,0.1)" : "1px solid transparent",
+              borderBottom: activeBucket === b.key ? "1px solid #0f172a" : "1px solid transparent",
               padding: "0.55rem 1.1rem",
               borderRadius: "8px 8px 0 0",
               fontSize: "0.82rem",
@@ -243,6 +216,7 @@ export default function InvestmentsPage() {
               cursor: "pointer",
               transition: "all 0.15s",
               marginBottom: "-1px",
+              whiteSpace: "nowrap",
             }}
           >
             {b.label}
@@ -250,7 +224,7 @@ export default function InvestmentsPage() {
         ))}
       </div>
 
-      {/* Strategy Card with gradient border */}
+      {/* Strategy Card */}
       <div
         style={{
           padding: "2px",
@@ -276,195 +250,290 @@ export default function InvestmentsPage() {
           </div>
           <div style={{ textAlign: "center" }}>
             <div style={labelStyle}>Target IRR</div>
-            <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "var(--success)" }}>
-              {bucket.targetIRR}
-            </div>
+            <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "#22c55e" }}>{bucket.targetIRR}</div>
           </div>
           <div style={{ textAlign: "center" }}>
             <div style={labelStyle}>Max Drawdown</div>
-            <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "var(--danger)" }}>
-              {bucket.maxDrawdown}
-            </div>
+            <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "#ef4444" }}>{bucket.maxDrawdown}</div>
           </div>
         </div>
       </div>
 
-      {/* Main Content Grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: "1.25rem" }}>
-        {/* Stock Picks Table */}
+      {loading ? (
+        <div className="glass-panel" style={{ padding: "3rem", textAlign: "center", color: "#94a3b8" }}>
+          Scanning stocks... This may take a minute.
+        </div>
+      ) : (
+        <>
+          {/* India Top 5 */}
+          <SectionErrorBoundary fallback="India picks error">
+            <PicksTable
+              title="India Top 5"
+              flag="IN"
+              currency="\u20B9"
+              picks={indiaPicks}
+            />
+          </SectionErrorBoundary>
+
+          {/* US Top 5 */}
+          <SectionErrorBoundary fallback="US picks error">
+            <PicksTable
+              title="US Top 5"
+              flag="US"
+              currency="$"
+              picks={usPicks}
+            />
+          </SectionErrorBoundary>
+
+          {/* Gold Setup */}
+          <SectionErrorBoundary fallback="Gold setup error">
+            <GoldSetupCard gold={goldSetup} />
+          </SectionErrorBoundary>
+        </>
+      )}
+
+      {/* Bottom Grid: Risk Rules + Kill Switch */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1.25rem", marginTop: "1.25rem" }}>
+        {/* Risk Rules */}
         <div className="glass-panel" style={{ padding: "1.25rem" }}>
-          <h2
-            style={{
-              fontSize: "0.95rem",
+          <h2 style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "0.75rem" }}>Risk Rules</h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+            <RuleRow label="Max capital per trade" value={bucket.maxCapPerTrade} />
+            <RuleRow label="Options allocation" value={bucket.optionsAllocation} />
+            <RuleRow label="Crypto cap" value={bucket.cryptoCap} />
+          </div>
+        </div>
+
+        {/* Philosophy */}
+        <div className="glass-panel" style={{ padding: "1.25rem" }}>
+          <h2 style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "0.75rem" }}>Portfolio Philosophy</h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+            <PhilosophyBar label="Systematic" sublabel="Signals + Models" pct={70} color="#3b82f6" />
+            <PhilosophyBar label="Discretionary" sublabel="Macro Overlays" pct={30} color="#8b5cf6" />
+          </div>
+        </div>
+
+        {/* Kill Switch */}
+        <div className="glass-panel" style={{ padding: "1.25rem" }}>
+          <h2 style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "0.75rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            Kill Switch
+            <span style={{
+              background: killSwitchActive ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
+              color: killSwitchActive ? "#22c55e" : "#ef4444",
+              padding: "0.12rem 0.5rem",
+              borderRadius: "4px",
+              fontSize: "0.68rem",
               fontWeight: 600,
-              marginBottom: "0.75rem",
-              display: "flex",
-              alignItems: "center",
-              gap: "0.5rem",
-            }}
-          >
-            Stock Picks
-            <span
-              style={{
-                background: "rgba(59,130,246,0.15)",
-                color: "var(--accent)",
-                padding: "0.1rem 0.5rem",
-                borderRadius: 4,
-                fontSize: "0.7rem",
-              }}
-            >
-              {stocks.length}
+            }}>
+              {killSwitchActive ? "ACTIVE" : "INACTIVE"}
             </span>
           </h2>
-
-          {loading ? (
-            <div style={{ padding: "2rem", textAlign: "center", color: "var(--text-secondary)", fontSize: "0.85rem" }}>
-              Loading...
-            </div>
-          ) : stocks.length === 0 ? (
-            <div style={{ padding: "2rem", textAlign: "center", color: "var(--text-secondary)", fontSize: "0.85rem" }}>
-              No stock picks available
-            </div>
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr style={{ borderBottom: "1px solid var(--border-glass)" }}>
-                    <th style={thStyle}>Symbol</th>
-                    <th style={thStyle}>Price</th>
-                    <th style={thStyle}>Change%</th>
-                    <th style={thStyle}>RSI</th>
-                    <th style={thStyle}>DMA Trend</th>
-                    <th style={thStyle}>Signal</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stocks.map((s) => {
-                    const sig = signalBadge(s.signal);
-                    return (
-                      <tr key={s.symbol} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
-                        <td style={{ ...tdStyle, fontWeight: 600 }}>{s.name || s.symbol}</td>
-                        <td style={tdStyle}>
-                          {s.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                        </td>
-                        <td style={{ ...tdStyle, color: changeColor(s.changePercent), fontWeight: 600 }}>
-                          {arrow(s.changePercent)} {s.changePercent > 0 ? "+" : ""}
-                          {s.changePercent.toFixed(2)}%
-                        </td>
-                        <td
-                          style={{
-                            ...tdStyle,
-                            color:
-                              s.rsi != null && s.rsi > 70
-                                ? "var(--danger)"
-                                : s.rsi != null && s.rsi < 30
-                                ? "var(--success)"
-                                : "var(--text-primary)",
-                          }}
-                        >
-                          {s.rsi != null ? s.rsi.toFixed(1) : "–"}
-                        </td>
-                        <td style={tdStyle}>
-                          <span
-                            style={{
-                              color: trendColor(s.trend),
-                              fontWeight: 600,
-                              fontSize: "0.75rem",
-                            }}
-                          >
-                            {trendLabel(s.trend)}
-                          </span>
-                        </td>
-                        <td style={tdStyle}>
-                          <span
-                            style={{
-                              background: sig.bg,
-                              color: sig.color,
-                              padding: "0.12rem 0.45rem",
-                              borderRadius: "4px",
-                              fontSize: "0.68rem",
-                              fontWeight: 600,
-                            }}
-                          >
-                            {s.signal}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <p style={{ color: "#94a3b8", fontSize: "0.8rem", marginBottom: "0.75rem" }}>
+            If portfolio drawdown exceeds 10%, all trading will stop automatically.
+          </p>
+          <button
+            onClick={() => setKillSwitchActive((prev) => !prev)}
+            style={{
+              width: "100%",
+              background: killSwitchActive ? "#ef4444" : "#22c55e",
+              color: "#fff",
+              border: "none",
+              padding: "0.5rem",
+              borderRadius: "8px",
+              fontSize: "0.8rem",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            {killSwitchActive ? "Deactivate Kill Switch" : "Activate Kill Switch"}
+          </button>
         </div>
+      </div>
 
-        {/* Right Sidebar */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
-          {/* Risk Rules */}
-          <div className="glass-panel" style={{ padding: "1.25rem" }}>
-            <h2 style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "0.75rem" }}>
-              Risk Rules
-            </h2>
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-              <RuleRow label="Max capital per trade" value={bucket.maxCapPerTrade} />
-              <RuleRow label="Options allocation" value={bucket.optionsAllocation} />
-              <RuleRow label="Crypto cap" value={bucket.cryptoCap} />
-            </div>
-          </div>
+      {/* Generated At */}
+      {picks?.generatedAt && (
+        <div style={{ marginTop: "1rem", textAlign: "right", fontSize: "0.7rem", color: "#64748b" }}>
+          Picks generated: {picks.generatedAt}
+        </div>
+      )}
+    </div>
+  );
+}
 
-          {/* Portfolio Rules */}
-          <div className="glass-panel" style={{ padding: "1.25rem" }}>
-            <h2 style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "0.75rem" }}>
-              Portfolio Philosophy
-            </h2>
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-              <PhilosophyBar label="Systematic" sublabel="Signals + Models" pct={70} color="var(--accent)" />
-              <PhilosophyBar label="Discretionary" sublabel="Macro Overlays" pct={30} color="var(--purple)" />
-            </div>
-          </div>
+// ── Picks Table ─────────────────────────────────────────────────────────────
 
-          {/* Kill Switch */}
-          <div className="glass-panel" style={{ padding: "1.25rem" }}>
-            <h2
-              style={{
-                fontSize: "0.95rem",
-                fontWeight: 600,
-                marginBottom: "0.75rem",
-                display: "flex",
-                alignItems: "center",
-                gap: "0.5rem",
-              }}
-            >
-              Kill Switch
-              <span
-                style={{
-                  background: killSwitchActive ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
-                  color: killSwitchActive ? "#22c55e" : "#ef4444",
-                  padding: "0.12rem 0.5rem",
-                  borderRadius: "4px",
-                  fontSize: "0.68rem",
-                  fontWeight: 600,
-                }}
-              >
-                {killSwitchActive ? "ACTIVE" : "INACTIVE"}
-              </span>
-            </h2>
-            <p style={{ color: "var(--text-secondary)", fontSize: "0.8rem", marginBottom: "0.75rem" }}>
-              If portfolio drawdown exceeds 10%, all trading will stop automatically.
-            </p>
-            <button
-              className="btn"
-              onClick={() => setKillSwitchActive((prev) => !prev)}
-              style={{
-                width: "100%",
-                background: killSwitchActive ? "var(--danger)" : "var(--success)",
-                fontSize: "0.8rem",
-              }}
-            >
-              {killSwitchActive ? "Deactivate Kill Switch" : "Activate Kill Switch"}
-            </button>
+function PicksTable({ title, flag, currency, picks }: { title: string; flag: string; currency: string; picks: any[] }) {
+  if (picks.length === 0) {
+    return (
+      <div className="glass-panel" style={{ padding: "1.5rem", marginBottom: "1.25rem" }}>
+        <h2 style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "0.5rem" }}>
+          {flag === "IN" ? "\uD83C\uDDEE\uD83C\uDDF3" : "\uD83C\uDDFA\uD83C\uDDF8"} {title}
+        </h2>
+        <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>No picks available - scanning in progress</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="glass-panel" style={{ padding: "1.25rem", marginBottom: "1.25rem" }}>
+      <h2 style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "0.75rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        {flag === "IN" ? "\uD83C\uDDEE\uD83C\uDDF3" : "\uD83C\uDDFA\uD83C\uDDF8"} {title}
+        <span style={{ background: "rgba(59,130,246,0.15)", color: "#3b82f6", padding: "0.1rem 0.5rem", borderRadius: 4, fontSize: "0.7rem" }}>
+          {picks.length}
+        </span>
+      </h2>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <th style={thStyle}>Stock</th>
+              <th style={thStyle}>Entry</th>
+              <th style={thStyle}>Target</th>
+              <th style={thStyle}>Stop Loss</th>
+              <th style={thStyle}>Duration</th>
+              <th style={thStyle}>RSI</th>
+              <th style={thStyle}>Setup</th>
+              <th style={thStyle}>Signal</th>
+            </tr>
+          </thead>
+          <tbody>
+            {picks.map((p: any, i: number) => {
+              const sig = signalBadge(p.signal || "WATCH");
+              const entry = safeNum(p.entry);
+              const target = safeNum(p.target);
+              const sl = safeNum(p.stopLoss);
+              const rsi = safeNum(p.rsi);
+
+              return (
+                <tr key={p.symbol || i} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
+                  <td style={{ ...tdStyle, fontWeight: 600 }}>
+                    <div>{p.name || p.symbol}</div>
+                    <div style={{ fontSize: "0.65rem", color: "#64748b" }}>{p.symbol}</div>
+                  </td>
+                  <td style={tdStyle}>
+                    {currency}{entry.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </td>
+                  <td style={tdStyle}>
+                    <div style={{ color: "#22c55e", fontWeight: 600 }}>
+                      {currency}{target.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </div>
+                    <div style={{ fontSize: "0.65rem", color: "#22c55e" }}>+{safeNum(p.targetPct)}%</div>
+                  </td>
+                  <td style={tdStyle}>
+                    <div style={{ color: "#ef4444", fontWeight: 600 }}>
+                      {currency}{sl.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </div>
+                    <div style={{ fontSize: "0.65rem", color: "#ef4444" }}>-{safeNum(p.stopLossPct)}%</div>
+                  </td>
+                  <td style={{ ...tdStyle, fontSize: "0.75rem" }}>{p.duration || "3M"}</td>
+                  <td style={{
+                    ...tdStyle,
+                    color: rsi > 70 ? "#ef4444" : rsi < 30 ? "#22c55e" : "#f1f5f9",
+                    fontWeight: 600,
+                  }}>
+                    {rsi.toFixed(1)}
+                  </td>
+                  <td style={{ ...tdStyle, fontSize: "0.72rem", color: "#94a3b8" }}>{p.setupType || "Watch"}</td>
+                  <td style={tdStyle}>
+                    <span style={{
+                      background: sig.bg,
+                      color: sig.color,
+                      padding: "0.15rem 0.5rem",
+                      borderRadius: "4px",
+                      fontSize: "0.7rem",
+                      fontWeight: 600,
+                    }}>
+                      {p.signal || "WATCH"}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ── Gold Setup Card ─────────────────────────────────────────────────────────
+
+function GoldSetupCard({ gold }: { gold: any }) {
+  if (!gold) {
+    return (
+      <div className="glass-panel" style={{ padding: "1.5rem", marginBottom: "1.25rem" }}>
+        <h2 style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "0.5rem" }}>Gold Trade Setup</h2>
+        <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>No gold setup available</div>
+      </div>
+    );
+  }
+
+  const sig = signalBadge(gold.signal || "HOLD");
+
+  return (
+    <div className="glass-panel" style={{ padding: "1.25rem", marginBottom: "1.25rem" }}>
+      <h2 style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "0.75rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        Gold Trade Setup
+        <span style={{ ...sig, padding: "0.12rem 0.5rem", borderRadius: "4px", fontSize: "0.7rem", fontWeight: 600, background: sig.bg, color: sig.color }}>
+          {gold.signal}
+        </span>
+      </h2>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "1rem" }}>
+        <div>
+          <div style={labelStyle}>USD Price</div>
+          <div style={{ fontSize: "1.2rem", fontWeight: 700 }}>
+            ${safeNum(gold.usdPrice).toLocaleString(undefined, { maximumFractionDigits: 2 })}
           </div>
         </div>
+        <div>
+          <div style={labelStyle}>INR Price (per 10g)</div>
+          <div style={{ fontSize: "1.2rem", fontWeight: 700, color: "#eab308" }}>
+            {"\u20B9"}{safeNum(gold.inrPricePer10g).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          </div>
+        </div>
+        <div>
+          <div style={labelStyle}>Entry</div>
+          <div style={{ fontSize: "1rem", fontWeight: 600 }}>
+            ${safeNum(gold.entry).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+          </div>
+        </div>
+        <div>
+          <div style={labelStyle}>Target</div>
+          <div style={{ fontSize: "1rem", fontWeight: 600, color: "#22c55e" }}>
+            ${safeNum(gold.target).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            <span style={{ fontSize: "0.7rem", marginLeft: "0.3rem" }}>+{safeNum(gold.targetPct)}%</span>
+          </div>
+        </div>
+        <div>
+          <div style={labelStyle}>Stop Loss</div>
+          <div style={{ fontSize: "1rem", fontWeight: 600, color: "#ef4444" }}>
+            ${safeNum(gold.stopLoss).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            <span style={{ fontSize: "0.7rem", marginLeft: "0.3rem" }}>-{safeNum(gold.stopLossPct)}%</span>
+          </div>
+        </div>
+        <div>
+          <div style={labelStyle}>Setup / RSI</div>
+          <div style={{ fontSize: "0.85rem", color: "#94a3b8" }}>
+            {gold.setupType} | RSI: {safeNum(gold.rsi).toFixed(1)}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ marginTop: "0.75rem", padding: "0.6rem", background: "rgba(255,255,255,0.03)", borderRadius: "8px" }}>
+        <div style={{ fontSize: "0.78rem", color: "#94a3b8" }}>
+          <span style={{ fontWeight: 600, color: changeColor(gold.signal === "BUY" ? 1 : gold.signal === "SELL" ? -1 : 0) }}>
+            {gold.signal}:
+          </span>{" "}
+          {gold.signalReason}
+        </div>
+      </div>
+
+      {/* DMA Levels */}
+      <div style={{ marginTop: "0.75rem", display: "flex", gap: "1.5rem", fontSize: "0.75rem" }}>
+        <span style={{ color: "#94a3b8" }}>50 DMA: <span style={{ color: "#f1f5f9", fontWeight: 600 }}>${safeNum(gold.dma50).toLocaleString()}</span></span>
+        <span style={{ color: "#94a3b8" }}>200 DMA: <span style={{ color: "#f1f5f9", fontWeight: 600 }}>${safeNum(gold.dma200).toLocaleString()}</span></span>
+        <span style={{ color: "#94a3b8" }}>GOLDBEES: <span style={{ color: "#f1f5f9", fontWeight: 600 }}>{"\u20B9"}{safeNum(gold.goldbeesPrice).toLocaleString()}</span></span>
       </div>
     </div>
   );
@@ -475,63 +544,34 @@ export default function InvestmentsPage() {
 function RuleRow({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-      <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>{label}</span>
-      <span
-        style={{
-          fontSize: "0.82rem",
-          fontWeight: 600,
-          color: "var(--text-primary)",
-          background: "rgba(255,255,255,0.04)",
-          padding: "0.15rem 0.5rem",
-          borderRadius: "4px",
-        }}
-      >
+      <span style={{ fontSize: "0.8rem", color: "#94a3b8" }}>{label}</span>
+      <span style={{
+        fontSize: "0.82rem",
+        fontWeight: 600,
+        background: "rgba(255,255,255,0.04)",
+        padding: "0.15rem 0.5rem",
+        borderRadius: "4px",
+      }}>
         {value}
       </span>
     </div>
   );
 }
 
-function PhilosophyBar({
-  label,
-  sublabel,
-  pct,
-  color,
-}: {
-  label: string;
-  sublabel: string;
-  pct: number;
-  color: string;
-}) {
+function PhilosophyBar({ label, sublabel, pct, color }: { label: string; sublabel: string; pct: number; color: string }) {
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.3rem" }}>
         <div>
           <span style={{ fontSize: "0.82rem", fontWeight: 600 }}>{label}</span>
-          <span style={{ fontSize: "0.72rem", color: "var(--text-secondary)", marginLeft: "0.4rem" }}>
-            {sublabel}
-          </span>
+          <span style={{ fontSize: "0.72rem", color: "#94a3b8", marginLeft: "0.4rem" }}>{sublabel}</span>
         </div>
         <span style={{ fontSize: "0.82rem", fontWeight: 700, color }}>{pct}%</span>
       </div>
-      <div
-        style={{
-          height: "6px",
-          background: "rgba(255,255,255,0.06)",
-          borderRadius: "3px",
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            width: `${pct}%`,
-            height: "100%",
-            background: color,
-            borderRadius: "3px",
-            transition: "width 0.3s",
-          }}
-        />
+      <div style={{ height: "6px", background: "rgba(255,255,255,0.06)", borderRadius: "3px", overflow: "hidden" }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: "3px", transition: "width 0.3s" }} />
       </div>
     </div>
   );
 }
+/* eslint-enable @typescript-eslint/no-explicit-any */

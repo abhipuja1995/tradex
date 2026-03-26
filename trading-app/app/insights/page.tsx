@@ -54,12 +54,13 @@ function safePct(v: unknown): string {
 
 // ── Tabs ───────────────────────────────────────────────────────────────────
 
-type TabKey = "macro" | "health" | "volatility" | "commodities" | "crypto";
+type TabKey = "macro" | "health" | "volatility" | "commodities" | "gold" | "crypto";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "macro", label: "Macro" },
   { key: "health", label: "Market Health" },
   { key: "volatility", label: "Volatility" },
+  { key: "gold", label: "Gold" },
   { key: "commodities", label: "Commodities" },
   { key: "crypto", label: "Crypto" },
 ];
@@ -114,15 +115,15 @@ function arrow(v: number) {
 
 function signalColor(d: string) {
   const lower = safeStr(d).toLowerCase();
-  if (lower === "bullish") return "#22c55e";
-  if (lower === "bearish") return "#ef4444";
+  if (lower === "bullish" || lower === "buy") return "#22c55e";
+  if (lower === "bearish" || lower === "sell") return "#ef4444";
   return "#94a3b8";
 }
 
 function signalBg(d: string) {
   const lower = safeStr(d).toLowerCase();
-  if (lower === "bullish") return "rgba(34,197,94,0.12)";
-  if (lower === "bearish") return "rgba(239,68,68,0.12)";
+  if (lower === "bullish" || lower === "buy") return "rgba(34,197,94,0.12)";
+  if (lower === "bearish" || lower === "sell") return "rgba(239,68,68,0.12)";
   return "rgba(148,163,184,0.12)";
 }
 
@@ -167,6 +168,7 @@ export default function InsightsPage() {
   const [vol, setVol] = useState<any>(null);
   const [commodities, setCommodities] = useState<any[]>([]);
   const [crypto, setCrypto] = useState<any[]>([]);
+  const [goldData, setGoldData] = useState<any>(null);
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
   const [loadingMacro, setLoadingMacro] = useState(true);
@@ -174,6 +176,7 @@ export default function InsightsPage() {
   const [loadingVol, setLoadingVol] = useState(true);
   const [loadingComm, setLoadingComm] = useState(true);
   const [loadingCrypto, setLoadingCrypto] = useState(true);
+  const [loadingGold, setLoadingGold] = useState(true);
 
   const fetchAll = useCallback(async () => {
     setLoadingMacro(true);
@@ -217,6 +220,13 @@ export default function InsightsPage() {
       .then((d) => { try { setCrypto(Array.isArray(d?.crypto) ? d.crypto : []); } catch {} })
       .catch(() => {})
       .finally(() => setLoadingCrypto(false));
+
+    setLoadingGold(true);
+    fetch("/api/market/gold")
+      .then((r) => r.json())
+      .then((d) => { try { setGoldData(d); } catch {} })
+      .catch(() => {})
+      .finally(() => setLoadingGold(false));
   }, []);
 
   useEffect(() => {
@@ -230,7 +240,7 @@ export default function InsightsPage() {
       <div style={{ marginBottom: "1.25rem" }}>
         <h1 className="title" style={{ marginBottom: "0.25rem" }}>Insights</h1>
         <p style={{ color: "#94a3b8", fontSize: "0.85rem" }}>
-          Macro regime, market health, volatility, and asset signals
+          Macro regime, market health, volatility, gold, and asset signals
         </p>
       </div>
 
@@ -242,6 +252,7 @@ export default function InsightsPage() {
           marginBottom: "1.5rem",
           borderBottom: "1px solid rgba(255,255,255,0.08)",
           paddingBottom: "0",
+          overflowX: "auto",
         }}
       >
         {TABS.map((t) => (
@@ -260,6 +271,7 @@ export default function InsightsPage() {
               cursor: "pointer",
               transition: "all 0.15s",
               marginBottom: "-1px",
+              whiteSpace: "nowrap",
             }}
           >
             {t.label}
@@ -275,6 +287,9 @@ export default function InsightsPage() {
       </PanelErrorBoundary>
       <PanelErrorBoundary fallback="Volatility panel error">
         {activeTab === "volatility" && <VolatilityPanel data={vol} loading={loadingVol} />}
+      </PanelErrorBoundary>
+      <PanelErrorBoundary fallback="Gold panel error">
+        {activeTab === "gold" && <GoldPanel data={goldData} loading={loadingGold} />}
       </PanelErrorBoundary>
       <PanelErrorBoundary fallback="Commodities panel error">
         {activeTab === "commodities" && <CommoditiesPanel items={commodities} loading={loadingComm} />}
@@ -523,6 +538,159 @@ function VolatilityPanel({ data, loading }: { data: any; loading: boolean }) {
         <div style={labelStyle}>Options Signal</div>
         <div style={{ fontSize: "1.1rem", fontWeight: 600, color: optSig.color, marginTop: "0.25rem" }}>
           {optSig.text}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Gold Panel ─────────────────────────────────────────────────────────────
+
+function GoldPanel({ data, loading }: { data: any; loading: boolean }) {
+  if (loading) return <LoadingPlaceholder />;
+  if (!data) return <EmptyState label="No gold data available" />;
+
+  const usdPrice = safeNum(data.usd?.price);
+  const usdChange = safeNum(data.usd?.changePercent);
+  const inrPer10g = safeNum(data.inr?.pricePer10g);
+  const inrPerGram = safeNum(data.inr?.pricePerGram);
+  const goldbeesPrice = safeNum(data.inr?.goldbees?.price);
+  const goldbeesChange = safeNum(data.inr?.goldbees?.changePercent);
+  const dma50 = safeNum(data.usd?.dma50);
+  const dma200 = safeNum(data.usd?.dma200);
+  const rsi = safeNum(data.usd?.rsi, 50);
+  const signal = safeStr(data.signal, "HOLD");
+  const reason = safeStr(data.signalReason);
+
+  return (
+    <div>
+      {/* Signal Banner */}
+      <div
+        className="glass-panel"
+        style={{
+          padding: "1.25rem 1.5rem",
+          marginBottom: "1.25rem",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: "1rem",
+        }}
+      >
+        <div>
+          <div style={labelStyle}>Gold Signal</div>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+            <span style={smallBadge(signalBg(signal), signalColor(signal))}>
+              {signal}
+            </span>
+            <span style={{ fontSize: "0.85rem", color: "#94a3b8" }}>{reason}</span>
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={labelStyle}>Macro Context</div>
+          <div style={{ fontSize: "0.75rem", color: "#94a3b8" }}>
+            DXY: {safeFixed(data.macro?.dxy)} | VIX: {safeFixed(data.macro?.vix)} | 10Y: {safeFixed(data.macro?.yield10y)}
+          </div>
+        </div>
+      </div>
+
+      {/* Price Cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1rem", marginBottom: "1.25rem" }}>
+        <div className="glass-panel" style={{ padding: "1.25rem" }}>
+          <div style={labelStyle}>Gold (USD/oz)</div>
+          <div style={{ ...bigNum, marginBottom: "0.25rem" }}>
+            ${usdPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+          </div>
+          <span style={{ color: changeColor(usdChange), fontWeight: 600, fontSize: "0.85rem" }}>
+            {arrow(usdChange)} {safePct(usdChange)}
+          </span>
+        </div>
+
+        <div className="glass-panel" style={{ padding: "1.25rem" }}>
+          <div style={labelStyle}>Gold (INR/10g)</div>
+          <div style={{ ...bigNum, marginBottom: "0.25rem", color: "#eab308" }}>
+            {"\u20B9"}{inrPer10g.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          </div>
+          <div style={{ fontSize: "0.72rem", color: "#94a3b8" }}>
+            {"\u20B9"}{inrPerGram.toLocaleString(undefined, { maximumFractionDigits: 0 })}/gram | USD/INR: {safeFixed(data.usdInrRate, 2)}
+          </div>
+        </div>
+
+        <div className="glass-panel" style={{ padding: "1.25rem" }}>
+          <div style={labelStyle}>GOLDBEES (ETF Proxy)</div>
+          {goldbeesPrice > 0 ? (
+            <>
+              <div style={{ ...bigNum, marginBottom: "0.25rem" }}>
+                {"\u20B9"}{goldbeesPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </div>
+              <span style={{ color: changeColor(goldbeesChange), fontWeight: 600, fontSize: "0.85rem" }}>
+                {arrow(goldbeesChange)} {safePct(goldbeesChange)}
+              </span>
+            </>
+          ) : (
+            <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>Data unavailable</div>
+          )}
+        </div>
+      </div>
+
+      {/* Key Levels + RSI */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+        <div className="glass-panel" style={{ padding: "1.25rem" }}>
+          <div style={labelStyle}>Key Levels Framework</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", marginTop: "0.5rem" }}>
+            {[
+              { label: "Support (50 DMA)", val: dma50, status: usdPrice >= dma50 },
+              { label: "Strong Support (200 DMA)", val: dma200, status: usdPrice >= dma200 },
+            ].map((level) => (
+              <div key={level.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "0.8rem", color: "#94a3b8" }}>{level.label}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span style={{ fontSize: "0.85rem", fontWeight: 600, color: level.status ? "#22c55e" : "#ef4444" }}>
+                    ${level.val.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </span>
+                  <span style={{ fontSize: "0.68rem", color: level.status ? "#22c55e" : "#ef4444" }}>
+                    {level.status ? "ABOVE" : "BELOW"}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="glass-panel" style={{ padding: "1.25rem" }}>
+          <div style={labelStyle}>RSI (14)</div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: "0.75rem", marginTop: "0.5rem" }}>
+            <span style={{ fontSize: "2rem", fontWeight: 700, color: rsi > 70 ? "#ef4444" : rsi < 30 ? "#22c55e" : "#f1f5f9" }}>
+              {safeFixed(rsi, 1)}
+            </span>
+            <span style={{ fontSize: "0.8rem", color: "#94a3b8" }}>
+              {rsi > 70 ? "Overbought - Consider booking profits" : rsi < 30 ? "Oversold - Accumulation zone" : "Neutral range"}
+            </span>
+          </div>
+          <div style={{ marginTop: "0.75rem", height: "8px", background: "rgba(255,255,255,0.06)", borderRadius: "4px", overflow: "hidden", position: "relative" }}>
+            <div style={{ width: `${Math.min(rsi, 100)}%`, height: "100%", background: rsi > 70 ? "#ef4444" : rsi < 30 ? "#22c55e" : "#3b82f6", borderRadius: "4px" }} />
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.65rem", color: "#94a3b8", marginTop: "0.25rem" }}>
+            <span>Oversold (30)</span>
+            <span>Overbought (70)</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Trading Logic */}
+      <div className="glass-panel" style={{ padding: "1.25rem", marginTop: "1rem" }}>
+        <div style={labelStyle}>Gold Trading Logic</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem", marginTop: "0.5rem" }}>
+          {[
+            { condition: "Dollar ↓ + Yields ↓", action: "BUY", color: "#22c55e" },
+            { condition: "VIX ↑ + Fear Rising", action: "BUY", color: "#22c55e" },
+            { condition: "Equity Rally Strong", action: "SELL / Book Profit", color: "#ef4444" },
+          ].map((rule) => (
+            <div key={rule.condition} style={{ padding: "0.6rem", background: "rgba(255,255,255,0.03)", borderRadius: "8px" }}>
+              <div style={{ fontSize: "0.75rem", color: "#94a3b8", marginBottom: "0.25rem" }}>{rule.condition}</div>
+              <div style={{ fontSize: "0.85rem", fontWeight: 600, color: rule.color }}>{rule.action}</div>
+            </div>
+          ))}
         </div>
       </div>
     </div>
