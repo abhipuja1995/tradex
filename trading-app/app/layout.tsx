@@ -68,6 +68,26 @@ export default function RootLayout({
             >
               Settings
             </a>
+            <a
+              href="/insights"
+              style={{
+                color: "#94a3b8",
+                textDecoration: "none",
+                fontSize: "0.85rem",
+              }}
+            >
+              Insights
+            </a>
+            <a
+              href="/investments"
+              style={{
+                color: "#94a3b8",
+                textDecoration: "none",
+                fontSize: "0.85rem",
+              }}
+            >
+              Investments
+            </a>
           </div>
         </nav>
         {children}
