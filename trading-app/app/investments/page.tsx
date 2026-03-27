@@ -156,48 +156,10 @@ function signalBadge(signal: string): { bg: string; color: string } {
   return { bg: "rgba(234,179,8,0.12)", color: "#eab308" };
 }
 
-/** Re-score and re-sort picks for a given bucket, adjusting target/SL */
-function adjustPicksForBucket(rawPicks: any[], bucket: BucketConfig): any[] {
-  if (!rawPicks || rawPicks.length === 0) return [];
-
-  return rawPicks
-    .map((p: any) => {
-      const price = safeNum(p.price);
-      const rsi = safeNum(p.rsi, 50);
-      const setupType = p.setupType || "Watch";
-
-      // Bucket-specific target and stop loss
-      const tPct = bucket.targetPct;
-      const slPct = bucket.stopLossPct;
-      const target = parseFloat((price * (1 + tPct / 100)).toFixed(2));
-      const stopLoss = parseFloat((price * (1 - slPct / 100)).toFixed(2));
-
-      // Re-score: prefer setups that match this bucket
-      let bucketScore = safeNum(p.score, 0);
-      if (bucket.preferredSetups.includes(setupType)) {
-        bucketScore += 20;
-      }
-      // Short-term buckets prefer higher RSI (momentum)
-      if (bucket.key === "weeks" || bucket.key === "3m") {
-        if (rsi >= 45 && rsi <= 65) bucketScore += 10;
-      }
-      // Long-term buckets prefer lower RSI (value)
-      if (bucket.key === "9m" || bucket.key === "12m") {
-        if (rsi < 40) bucketScore += 15;
-      }
-
-      return {
-        ...p,
-        target,
-        targetPct: tPct,
-        stopLoss,
-        stopLossPct: slPct,
-        duration: bucket.duration,
-        bucketScore,
-      };
-    })
-    .sort((a: any, b: any) => b.bucketScore - a.bucketScore)
-    .slice(0, 5);
+/** Calculate how close current price is to its Fibonacci floor (lower = better buying opportunity) */
+function fibProximityPct(price: number, fibFloor: number): number {
+  if (!fibFloor || fibFloor <= 0) return 999;
+  return ((price - fibFloor) / fibFloor) * 100;
 }
 
 // ── Main Component ─────────────────────────────────────────────────────────
@@ -246,12 +208,21 @@ export default function InvestmentsPage() {
     }
   };
 
-  // Adjust picks per bucket — different targets, SL, sort order
-  const rawIndia: any[] = Array.isArray(picks?.india) ? picks.india : [];
-  const rawUS: any[] = Array.isArray(picks?.us) ? picks.us : [];
-  const indiaPicks = adjustPicksForBucket(rawIndia, bucket);
-  const usPicks = adjustPicksForBucket(rawUS, bucket);
+  // Read bucket-specific picks directly from pre-computed API data
+  const bucketData = picks?.buckets?.[activeBucket];
+  const indiaPicks: any[] = Array.isArray(bucketData?.india) ? bucketData.india : [];
+  const usPicks: any[] = Array.isArray(bucketData?.us) ? bucketData.us : [];
   const goldSetup: any = picks?.gold || null;
+
+  // Full Nifty 50 pool for Fibonacci floor section
+  const allIndiaStocks: any[] = Array.isArray(picks?.allIndia) ? picks.allIndia : [];
+  const fibNifty50 = allIndiaStocks
+    .filter((s: any) => safeNum(s.fibFloor) > 0)
+    .map((s: any) => ({
+      ...s,
+      proximity: fibProximityPct(safeNum(s.price), safeNum(s.fibFloor)),
+    }))
+    .sort((a: any, b: any) => a.proximity - b.proximity);
 
   return (
     <div className="container">
@@ -382,6 +353,11 @@ export default function InvestmentsPage() {
           <SectionErrorBoundary fallback="Gold setup error">
             <GoldSetupCard gold={goldSetup} bucket={bucket} />
           </SectionErrorBoundary>
+
+          {/* Fibonacci Floor Prices — Nifty 50 */}
+          <SectionErrorBoundary fallback="Fibonacci floors error">
+            <FibFloorSection stocks={fibNifty50} />
+          </SectionErrorBoundary>
         </>
       )}
 
@@ -477,6 +453,7 @@ function PicksTable({ title, flag, currency, picks, bucket }: {
             <tr>
               <th style={thStyle}>Stock</th>
               <th style={thStyle}>Entry</th>
+              <th style={thStyle}>Fib Floor</th>
               <th style={thStyle}>Target</th>
               <th style={thStyle}>Stop Loss</th>
               <th style={thStyle}>Duration</th>
@@ -494,6 +471,7 @@ function PicksTable({ title, flag, currency, picks, bucket }: {
               const rsi = safeNum(p.rsi);
               const tPct = safeNum(p.targetPct);
               const slPct = safeNum(p.stopLossPct);
+              const fibFloor = safeNum(p.fibFloor);
 
               return (
                 <tr key={(p.symbol || "") + i} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
@@ -503,6 +481,18 @@ function PicksTable({ title, flag, currency, picks, bucket }: {
                   </td>
                   <td style={{ ...tdStyle, fontWeight: 600 }}>
                     {fmt(entry)}
+                  </td>
+                  <td style={tdStyle}>
+                    {fibFloor > 0 ? (
+                      <div>
+                        <div style={{ color: "#eab308", fontWeight: 600 }}>{fmt(fibFloor)}</div>
+                        <div style={{ fontSize: "0.65rem", color: entry > fibFloor ? "#22c55e" : "#ef4444" }}>
+                          {entry > fibFloor ? "+" : ""}{((entry - fibFloor) / fibFloor * 100).toFixed(1)}% above
+                        </div>
+                      </div>
+                    ) : (
+                      <span style={{ color: "#64748b", fontSize: "0.75rem" }}>—</span>
+                    )}
                   </td>
                   <td style={tdStyle}>
                     <div style={{ color: "#22c55e", fontWeight: 600 }}>{fmt(target)}</div>
@@ -557,6 +547,8 @@ function GoldSetupCard({ gold, bucket }: { gold: any; bucket: BucketConfig }) {
   const goldTarget = parseFloat((goldPrice * (1 + bucket.targetPct / 100)).toFixed(2));
   const goldSL = parseFloat((goldPrice * (1 - bucket.stopLossPct / 100)).toFixed(2));
 
+  const fibLevels = gold.fibLevels || gold.fibonacci || null;
+
   return (
     <div className="glass-panel" style={{ padding: "1.25rem", marginBottom: "1.25rem" }}>
       <h2 style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "0.75rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
@@ -607,6 +599,30 @@ function GoldSetupCard({ gold, bucket }: { gold: any; bucket: BucketConfig }) {
         </div>
       </div>
 
+      {/* Fibonacci Levels for Gold */}
+      {fibLevels && (
+        <div style={{ marginTop: "1rem", padding: "0.75rem", background: "rgba(234,179,8,0.06)", borderRadius: "8px", border: "1px solid rgba(234,179,8,0.15)" }}>
+          <div style={{ ...labelStyle, color: "#eab308", marginBottom: "0.6rem" }}>Fibonacci Levels</div>
+          <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap", fontSize: "0.8rem" }}>
+            {fibLevels.level236 != null && (
+              <span style={{ color: "#94a3b8" }}>23.6%: <span style={{ color: "#f1f5f9", fontWeight: 600 }}>{fmtUSD(safeNum(fibLevels.level236))}</span></span>
+            )}
+            {fibLevels.level382 != null && (
+              <span style={{ color: "#94a3b8" }}>38.2%: <span style={{ color: "#f1f5f9", fontWeight: 600 }}>{fmtUSD(safeNum(fibLevels.level382))}</span></span>
+            )}
+            {fibLevels.level500 != null && (
+              <span style={{ color: "#94a3b8" }}>50.0%: <span style={{ color: "#eab308", fontWeight: 600 }}>{fmtUSD(safeNum(fibLevels.level500))}</span></span>
+            )}
+            {fibLevels.level618 != null && (
+              <span style={{ color: "#94a3b8" }}>61.8%: <span style={{ color: "#f1f5f9", fontWeight: 600 }}>{fmtUSD(safeNum(fibLevels.level618))}</span></span>
+            )}
+            {fibLevels.level786 != null && (
+              <span style={{ color: "#94a3b8" }}>78.6%: <span style={{ color: "#f1f5f9", fontWeight: 600 }}>{fmtUSD(safeNum(fibLevels.level786))}</span></span>
+            )}
+          </div>
+        </div>
+      )}
+
       <div style={{ marginTop: "0.75rem", padding: "0.6rem", background: "rgba(255,255,255,0.03)", borderRadius: "8px" }}>
         <div style={{ fontSize: "0.78rem", color: "#94a3b8" }}>
           <span style={{ fontWeight: 600, color: changeColor(gold.signal === "BUY" ? 1 : gold.signal === "SELL" ? -1 : 0) }}>
@@ -621,6 +637,127 @@ function GoldSetupCard({ gold, bucket }: { gold: any; bucket: BucketConfig }) {
         <span style={{ color: "#94a3b8" }}>200 DMA: <span style={{ color: "#f1f5f9", fontWeight: 600 }}>{fmtUSD(safeNum(gold.dma200))}</span></span>
         <span style={{ color: "#94a3b8" }}>GOLDBEES: <span style={{ color: "#f1f5f9", fontWeight: 600 }}>{fmtINR(safeNum(gold.goldbeesPrice))}</span></span>
       </div>
+    </div>
+  );
+}
+
+// ── Fibonacci Floor Prices — Nifty 50 ───────────────────────────────────────
+
+function FibFloorSection({ stocks }: { stocks: any[] }) {
+  const [showAll, setShowAll] = useState(false);
+
+  if (stocks.length === 0) {
+    return (
+      <div className="glass-panel" style={{ padding: "1.5rem", marginBottom: "1.25rem" }}>
+        <h2 style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "0.5rem" }}>
+          Fibonacci Floor Prices — Nifty 50
+        </h2>
+        <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>No Fibonacci data available</div>
+      </div>
+    );
+  }
+
+  const displayed = showAll ? stocks : stocks.slice(0, 15);
+
+  return (
+    <div className="glass-panel" style={{ padding: "1.25rem", marginBottom: "1.25rem" }}>
+      <h2 style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "0.5rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        Fibonacci Floor Prices — Nifty 50
+        <span style={{ background: "rgba(234,179,8,0.12)", color: "#eab308", padding: "0.1rem 0.5rem", borderRadius: 4, fontSize: "0.7rem" }}>
+          {stocks.length} stocks
+        </span>
+      </h2>
+      <p style={{ color: "#94a3b8", fontSize: "0.78rem", marginBottom: "0.75rem" }}>
+        Sorted by proximity to Fibonacci support — best buying opportunities at the top
+      </p>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <th style={thStyle}>#</th>
+              <th style={thStyle}>Stock</th>
+              <th style={thStyle}>CMP</th>
+              <th style={thStyle}>Fib Floor</th>
+              <th style={thStyle}>Distance to Floor</th>
+              <th style={thStyle}>RSI</th>
+              <th style={thStyle}>Signal</th>
+            </tr>
+          </thead>
+          <tbody>
+            {displayed.map((s: any, i: number) => {
+              const cmp = safeNum(s.price);
+              const floor = safeNum(s.fibFloor);
+              const proximity = safeNum(s.proximity);
+              const rsi = safeNum(s.rsi);
+              const sig = signalBadge(s.signal || "WATCH");
+
+              // Color-code proximity: close to floor = green (good buy), far = neutral
+              const proxColor = proximity < 5 ? "#22c55e" : proximity < 15 ? "#eab308" : "#94a3b8";
+
+              return (
+                <tr key={(s.symbol || "") + i} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
+                  <td style={{ ...tdStyle, color: "#64748b", fontSize: "0.72rem" }}>{i + 1}</td>
+                  <td style={{ ...tdStyle, fontWeight: 600 }}>
+                    <div>{s.name || s.symbol}</div>
+                    <div style={{ fontSize: "0.65rem", color: "#64748b" }}>{s.symbol}</div>
+                  </td>
+                  <td style={{ ...tdStyle, fontWeight: 600 }}>{fmtINR(cmp)}</td>
+                  <td style={{ ...tdStyle, fontWeight: 600, color: "#eab308" }}>{fmtINR(floor)}</td>
+                  <td style={tdStyle}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <div style={{
+                        width: "50px", height: "6px", background: "rgba(255,255,255,0.06)",
+                        borderRadius: "3px", overflow: "hidden",
+                      }}>
+                        <div style={{
+                          width: `${Math.max(2, Math.min(100, 100 - proximity * 2))}%`,
+                          height: "100%", background: proxColor, borderRadius: "3px",
+                        }} />
+                      </div>
+                      <span style={{ color: proxColor, fontWeight: 600, fontSize: "0.78rem" }}>
+                        +{proximity.toFixed(1)}%
+                      </span>
+                    </div>
+                  </td>
+                  <td style={{
+                    ...tdStyle,
+                    color: rsi > 70 ? "#ef4444" : rsi < 30 ? "#22c55e" : "#f1f5f9",
+                    fontWeight: 600,
+                  }}>
+                    {rsi > 0 ? rsi.toFixed(1) : "—"}
+                  </td>
+                  <td style={tdStyle}>
+                    <span style={{
+                      background: sig.bg, color: sig.color,
+                      padding: "0.15rem 0.5rem", borderRadius: "4px",
+                      fontSize: "0.7rem", fontWeight: 600,
+                    }}>
+                      {s.signal || "WATCH"}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {stocks.length > 15 && (
+        <button
+          onClick={() => setShowAll((prev) => !prev)}
+          style={{
+            marginTop: "0.75rem",
+            background: "rgba(255,255,255,0.04)",
+            color: "#94a3b8",
+            border: "1px solid rgba(255,255,255,0.08)",
+            padding: "0.4rem 1rem",
+            borderRadius: "6px",
+            fontSize: "0.78rem",
+            cursor: "pointer",
+          }}
+        >
+          {showAll ? "Show Top 15" : `Show All ${stocks.length} Stocks`}
+        </button>
+      )}
     </div>
   );
 }
