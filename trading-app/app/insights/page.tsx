@@ -609,10 +609,10 @@ function GoldPanel({ data, loading }: { data: any; loading: boolean }) {
         <div className="glass-panel" style={{ padding: "1.25rem" }}>
           <div style={labelStyle}>Gold (INR/10g)</div>
           <div style={{ ...bigNum, marginBottom: "0.25rem", color: "#eab308" }}>
-            {"\u20B9"}{inrPer10g.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            ₹{inrPer10g.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
           </div>
           <div style={{ fontSize: "0.72rem", color: "#94a3b8" }}>
-            {"\u20B9"}{inrPerGram.toLocaleString(undefined, { maximumFractionDigits: 0 })}/gram | USD/INR: {safeFixed(data.usdInrRate, 2)}
+            ₹{inrPerGram.toLocaleString("en-IN", { maximumFractionDigits: 0 })}/gram | USD/INR: {safeFixed(data.usdInrRate, 2)}
           </div>
         </div>
 
@@ -621,7 +621,7 @@ function GoldPanel({ data, loading }: { data: any; loading: boolean }) {
           {goldbeesPrice > 0 ? (
             <>
               <div style={{ ...bigNum, marginBottom: "0.25rem" }}>
-                {"\u20B9"}{goldbeesPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                ₹{goldbeesPrice.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
               </div>
               <span style={{ color: changeColor(goldbeesChange), fontWeight: 600, fontSize: "0.85rem" }}>
                 {arrow(goldbeesChange)} {safePct(goldbeesChange)}

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8692730838:AAHrThgIgUYaG1FjBZqClLkbgSIvUxKi7O4";
+const HARDCODED_CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
 
 async function sendTelegram(chatId: string, text: string): Promise<boolean> {
   try {
@@ -16,15 +17,34 @@ async function sendTelegram(chatId: string, text: string): Promise<boolean> {
       }),
     });
     const data = await res.json();
+    if (!data.ok) {
+      console.error("[cron] Telegram error:", data.description);
+    }
     return data.ok === true;
-  } catch {
+  } catch (err) {
+    console.error("[cron] sendTelegram failed:", err);
     return false;
   }
 }
 
 async function findChatId(): Promise<string | null> {
+  // 1. Use env var if set
+  if (HARDCODED_CHAT_ID) return HARDCODED_CHAT_ID;
+
+  // 2. Try @TradeX_Abhi_Puja channel
   try {
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?limit=10`);
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getChat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: "@TradeX_Abhi_Puja" }),
+    });
+    const data = await res.json();
+    if (data.ok && data.result?.id) return String(data.result.id);
+  } catch {}
+
+  // 3. Fallback: get from updates
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?limit=100`);
     const data = await res.json();
     if (data.ok && data.result?.length > 0) {
       for (let i = data.result.length - 1; i >= 0; i--) {
@@ -34,6 +54,7 @@ async function findChatId(): Promise<string | null> {
       }
     }
   } catch {}
+
   return null;
 }
 
@@ -61,13 +82,13 @@ function buildMessage(picks: any, gold: any, macro: any, vol: any): string {
   });
 
   const lines: string[] = [];
-  lines.push(`*TradeX Pre-Market Brief*`);
+  lines.push("*TradeX Pre-Market Brief*");
   lines.push(`${date} | ${time} IST`);
   lines.push("");
 
   // Macro regime
   const regime = macro?.regime || "UNKNOWN";
-  lines.push(`*Market Regime:* ${regime.replace(/_/g, " ")}`);
+  lines.push(`*Market Regime:* ${String(regime).replace(/_/g, " ")}`);
   if (macro?.signals) {
     const bullish = macro.signals.filter((s: any) => s.signal === "BULLISH").length;
     const bearish = macro.signals.filter((s: any) => s.signal === "BEARISH").length;
@@ -77,49 +98,33 @@ function buildMessage(picks: any, gold: any, macro: any, vol: any): string {
 
   // India picks
   if (picks?.india?.length) {
-    lines.push(`*India Top 5 Picks*`);
-    lines.push("```");
+    lines.push("*India Top 5 Picks*");
     picks.india.forEach((p: any, i: number) => {
-      const name = (p.name || p.symbol || "").substring(0, 18);
-      lines.push(
-        `${i + 1}. ${name}`
-      );
-      lines.push(
-        `   Entry: ${fmtINR(p.price)} → Target: ${fmtINR(p.target)} (+${p.targetPct}%)`
-      );
-      lines.push(
-        `   SL: ${fmtINR(p.stopLoss)} (-${p.stopLossPct}%) | RSI: ${(p.rsi || 0).toFixed(1)} | ${p.setupType}`
-      );
+      const name = (p.name || p.symbol || "").substring(0, 20);
+      lines.push(`${i + 1}. *${name}*`);
+      lines.push(`   Entry: ${fmtINR(p.price)} | Target: ${fmtINR(p.target)} (+${p.targetPct}%)`);
+      lines.push(`   SL: ${fmtINR(p.stopLoss)} (-${p.stopLossPct}%) | RSI: ${(p.rsi || 0).toFixed(1)} | ${p.setupType}`);
     });
-    lines.push("```");
     lines.push("");
   }
 
   // US picks
   if (picks?.us?.length) {
-    lines.push(`*US Top 5 Picks*`);
-    lines.push("```");
+    lines.push("*US Top 5 Picks*");
     picks.us.forEach((p: any, i: number) => {
-      const name = (p.name || p.symbol || "").substring(0, 18);
-      lines.push(
-        `${i + 1}. ${name}`
-      );
-      lines.push(
-        `   Entry: ${fmtUSD(p.price)} → Target: ${fmtUSD(p.target)} (+${p.targetPct}%)`
-      );
-      lines.push(
-        `   SL: ${fmtUSD(p.stopLoss)} (-${p.stopLossPct}%) | RSI: ${(p.rsi || 0).toFixed(1)}`
-      );
+      const name = (p.name || p.symbol || "").substring(0, 20);
+      lines.push(`${i + 1}. *${name}*`);
+      lines.push(`   Entry: ${fmtUSD(p.price)} | Target: ${fmtUSD(p.target)} (+${p.targetPct}%)`);
+      lines.push(`   SL: ${fmtUSD(p.stopLoss)} (-${p.stopLossPct}%) | RSI: ${(p.rsi || 0).toFixed(1)}`);
     });
-    lines.push("```");
     lines.push("");
   }
 
   // Gold
   if (gold) {
-    lines.push(`*Gold*`);
+    lines.push("*Gold*");
     lines.push(`USD: ${fmtUSD(gold.usd?.price || 0)} | INR: ${fmtINR(gold.inr?.pricePer10g || 0)}/10g`);
-    lines.push(`Signal: ${gold.signal} — ${gold.signalReason}`);
+    lines.push(`Signal: ${gold.signal} - ${gold.signalReason}`);
     lines.push("");
   }
 
@@ -131,7 +136,7 @@ function buildMessage(picks: any, gold: any, macro: any, vol: any): string {
     lines.push("");
   }
 
-  lines.push(`_Pre-market scan by TradeX AI Engine_`);
+  lines.push("_Pre-market scan by TradeX AI Engine_");
   return lines.join("\n");
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -146,12 +151,12 @@ export async function GET(req: Request) {
   try {
     const baseUrl = new URL(req.url).origin;
 
-    // Fetch all data in parallel — these hit Yahoo Finance via our API routes
+    // Fetch all data in parallel
     const [picksRes, goldRes, macroRes, volRes] = await Promise.all([
-      fetch(`${baseUrl}/api/market/picks`, { next: { revalidate: 0 } }).then((r) => r.json()).catch(() => null),
-      fetch(`${baseUrl}/api/market/gold`, { next: { revalidate: 0 } }).then((r) => r.json()).catch(() => null),
-      fetch(`${baseUrl}/api/market/macro`, { next: { revalidate: 0 } }).then((r) => r.json()).catch(() => null),
-      fetch(`${baseUrl}/api/market/volatility`, { next: { revalidate: 0 } }).then((r) => r.json()).catch(() => null),
+      fetch(`${baseUrl}/api/market/picks`, { cache: "no-store" }).then((r) => r.json()).catch(() => null),
+      fetch(`${baseUrl}/api/market/gold`, { cache: "no-store" }).then((r) => r.json()).catch(() => null),
+      fetch(`${baseUrl}/api/market/macro`, { cache: "no-store" }).then((r) => r.json()).catch(() => null),
+      fetch(`${baseUrl}/api/market/volatility`, { cache: "no-store" }).then((r) => r.json()).catch(() => null),
     ]);
 
     const message = buildMessage(picksRes, goldRes, macroRes, volRes);
@@ -159,10 +164,10 @@ export async function GET(req: Request) {
     // Find chat ID and send
     const chatId = await findChatId();
     if (!chatId) {
-      console.error("[cron] No Telegram chat found. Send /start to the bot first.");
+      console.error("[cron] No Telegram chat found. Send /start to @TradeX_Abhi_Puja_Bot first, or set TELEGRAM_CHAT_ID env var.");
       return NextResponse.json({
         success: false,
-        error: "No Telegram chat found",
+        error: "No Telegram chat found. Send /start to @TradeX_Abhi_Puja_Bot or set TELEGRAM_CHAT_ID env var.",
         preview: message,
       });
     }
