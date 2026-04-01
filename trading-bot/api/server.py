@@ -26,11 +26,17 @@ app.add_middleware(
 
 # The engine instance is set by run_bot.py after initialization
 _engine = None
+_telegram_bot = None
 
 
 def set_engine(engine):
     global _engine
     _engine = engine
+
+
+def set_telegram_bot(bot):
+    global _telegram_bot
+    _telegram_bot = bot
 
 
 def get_engine():
@@ -229,3 +235,30 @@ async def update_watchlist(req: WatchlistUpdate):
     engine = get_engine()
     engine.strategy.update_watchlist(req.symbols)
     return {"message": "Watchlist updated", "symbols": req.symbols}
+
+
+# --- Telegram Webhook ---
+
+@app.post("/api/telegram/webhook")
+async def telegram_webhook(request: Request):
+    """Receive Telegram updates via webhook (replaces long-polling)."""
+    if _telegram_bot is None:
+        raise HTTPException(503, "Telegram bot not initialized")
+
+    try:
+        update = await request.json()
+        await _telegram_bot._handle_update(update)
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"Webhook error: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/telegram/brief")
+async def trigger_brief():
+    """Manually trigger the daily brief to Telegram."""
+    if _telegram_bot is None:
+        raise HTTPException(503, "Telegram bot not initialized")
+
+    success = await _telegram_bot.send_daily_brief()
+    return {"success": success, "message": "Daily brief sent" if success else "Failed to send"}

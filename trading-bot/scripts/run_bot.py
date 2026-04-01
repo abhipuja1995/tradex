@@ -36,6 +36,47 @@ def start_api_server():
     )
 
 
+async def setup_telegram_webhook(telegram_bot, logger) -> bool:
+    """Set up Telegram webhook so bot can receive /start commands without polling."""
+    import httpx
+
+    webhook_url = "https://tradex-bot-production.up.railway.app/api/telegram/webhook"
+
+    try:
+        # First validate the token
+        is_valid = await telegram_bot.validate_token()
+        if not is_valid:
+            logger.error("Cannot set webhook — bot token is invalid")
+            return False
+
+        # Delete any existing webhook first, then set new one
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Delete old webhook
+            await client.post(
+                f"{telegram_bot.base_url}/deleteWebhook",
+                json={"drop_pending_updates": False},
+            )
+
+            # Set new webhook
+            resp = await client.post(
+                f"{telegram_bot.base_url}/setWebhook",
+                json={
+                    "url": webhook_url,
+                    "allowed_updates": ["message"],
+                },
+            )
+            data = resp.json()
+            if data.get("ok"):
+                logger.info(f"✅ Telegram webhook set: {webhook_url}")
+                return True
+            else:
+                logger.error(f"Webhook setup failed: {data.get('description')}")
+                return False
+    except Exception as e:
+        logger.error(f"Webhook setup error: {e}")
+        return False
+
+
 async def daily_brief_scheduler(telegram_bot):
     """Send daily brief at 8:45 AM and 10:00 AM IST every day."""
     from datetime import datetime
@@ -116,20 +157,24 @@ async def main():
 
     # Initialize engine
     from core.engine import TradingEngine
-    from api.server import set_engine
+    from api.server import set_engine, set_telegram_bot
 
     engine = TradingEngine()
     engine.alerter = telegram_bot  # Inject telegram bot as alerter
     set_engine(engine)
+    set_telegram_bot(telegram_bot)
     telegram_bot.set_engine(engine)
 
     # Start engine + telegram bot + scheduler concurrently
     tasks = []
 
-    # Telegram bot polling (always start if token is available)
+    # Telegram bot: try webhook first, fall back to polling
     if telegram_bot.enabled:
-        tasks.append(asyncio.create_task(telegram_bot.start_polling()))
-        logger.info("Telegram bot polling started")
+        webhook_ok = await setup_telegram_webhook(telegram_bot, logger)
+        if not webhook_ok:
+            # Fallback to polling if webhook setup fails
+            tasks.append(asyncio.create_task(telegram_bot.start_polling()))
+            logger.info("Telegram bot polling started (webhook unavailable)")
 
         # Daily brief scheduler (runs alongside bot)
         tasks.append(asyncio.create_task(daily_brief_scheduler(telegram_bot)))
