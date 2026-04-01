@@ -257,6 +257,17 @@ class TelegramBot:
     # ─── Command Handlers ───────────────────────────────────────
 
     async def _cmd_start(self, chat_id: str):
+        """Send daily picks brief with LTP on /start."""
+        await self.send_message("🔄 Fetching latest picks & prices...", chat_id)
+        try:
+            brief = await self._build_daily_brief()
+            if brief:
+                await self.send_message(brief, chat_id)
+                return
+        except Exception as e:
+            logger.error(f"/start brief failed: {e}", exc_info=True)
+
+        # Fallback: basic welcome
         await self.send_message(
             "🤖 <b>TradeX Micro-Trading Bot</b>\n\n"
             "I'm your automated trading assistant for Indian stocks.\n\n"
@@ -571,6 +582,193 @@ class TelegramBot:
             text += f"{i}. {s}\n"
 
         await self.send_message(text, chat_id)
+
+    # ─── Daily Brief Builder ─────────────────────────────────────
+
+    async def _build_daily_brief(self) -> str | None:
+        """Fetch picks from TradeX API and format a rich daily brief with LTP."""
+        TRADEX_API = "https://tradex-ivory.vercel.app/api/market"
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Fetch picks, gold, macro in parallel
+            results = await asyncio.gather(
+                client.get(f"{TRADEX_API}/picks"),
+                client.get(f"{TRADEX_API}/gold"),
+                client.get(f"{TRADEX_API}/macro"),
+                return_exceptions=True,
+            )
+
+            picks_data = results[0].json() if not isinstance(results[0], Exception) and results[0].status_code == 200 else None
+            gold_data = results[1].json() if not isinstance(results[1], Exception) and results[1].status_code == 200 else None
+            macro_data = results[2].json() if not isinstance(results[2], Exception) and results[2].status_code == 200 else None
+
+        if not picks_data:
+            return None
+
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        ist = ZoneInfo("Asia/Kolkata")
+        now = datetime.now(ist)
+        date_str = now.strftime("%a, %d %b %Y")
+        time_str = now.strftime("%I:%M %p")
+
+        lines = [
+            "📊 <b>TradeX Daily Brief</b>",
+            f"📅 {date_str} | {time_str} IST",
+            "",
+        ]
+
+        # Macro regime
+        if macro_data:
+            regime = macro_data.get("regime", "UNKNOWN").replace("_", " ")
+            lines.append(f"🌐 <b>Market Regime:</b> {regime}")
+            signals = macro_data.get("signals", [])
+            if signals:
+                bullish = sum(1 for s in signals if s.get("signal") == "BULLISH")
+                bearish = sum(1 for s in signals if s.get("signal") == "BEARISH")
+                lines.append(f"   Bullish: {bullish} | Bearish: {bearish}")
+
+                # Key macro values
+                parts = []
+                for s in signals:
+                    name = s.get("name", "")
+                    val = s.get("value") or s.get("price")
+                    if val and name in ("DXY", "Dollar Index", "VIX", "US VIX"):
+                        parts.append(f"{name}: {val}")
+                    elif val and "10Y" in name:
+                        parts.append(f"10Y: {val}%")
+                if parts:
+                    lines.append(f"   {' | '.join(parts)}")
+            lines.append("")
+
+        # Helper to format pick lines
+        def fmt_inr(v: float) -> str:
+            return f"₹{v:,.0f}"
+
+        def fmt_usd(v: float) -> str:
+            return f"${v:,.0f}"
+
+        def render_picks(title: str, picks: list, currency: str = "INR") -> list[str]:
+            if not picks:
+                return []
+            fmt = fmt_inr if currency == "INR" else fmt_usd
+            out = [f"<b>{title}</b>"]
+            for i, p in enumerate(picks[:5], 1):
+                name = (p.get("name") or p.get("symbol", ""))[:20]
+                price = p.get("price", 0)
+                target = p.get("target", 0)
+                target_pct = p.get("targetPct", 0)
+                sl = p.get("stopLoss", 0)
+                sl_pct = p.get("stopLossPct", 0)
+                rsi = p.get("rsi")
+                fib_floor = p.get("fibFloor")
+                setup = p.get("setupType", "")
+                signal = p.get("signal", "")
+
+                out.append(f"{i}. <b>{name}</b> {'🟢' if signal == 'BUY' else '🟡' if signal == 'HOLD' else '🔴'} {setup}")
+                out.append(f"   LTP: {fmt(price)} | Entry: {fmt(price)} → Target: {fmt(target)} (+{target_pct}%)")
+                out.append(f"   SL: {fmt(sl)} (-{sl_pct}%)")
+                extras = []
+                if fib_floor:
+                    extras.append(f"Fib Floor: {fmt(fib_floor)}")
+                if rsi:
+                    extras.append(f"RSI: {rsi:.1f}")
+                if extras:
+                    out.append(f"   {' | '.join(extras)}")
+            return out
+
+        # Buckets
+        buckets = picks_data.get("buckets", {})
+        all_india = picks_data.get("allIndia", [])
+        all_us = picks_data.get("allUS", [])
+
+        # Determine India vs US picks in each bucket
+        india_symbols = {p.get("symbol") or p.get("name") for p in all_india}
+        us_symbols = {p.get("symbol") or p.get("name") for p in all_us}
+
+        for bucket_key, bucket_label in [("weeks", "📅 Weekly"), ("3m", "📅 3-Month"), ("6m", "📅 6-Month"), ("9m", "📅 9-Month"), ("12m", "📅 12-Month")]:
+            bucket_picks = buckets.get(bucket_key, [])
+            if not bucket_picks:
+                continue
+
+            india_picks = [p for p in bucket_picks if (p.get("symbol") or p.get("name")) in india_symbols]
+            us_picks = [p for p in bucket_picks if (p.get("symbol") or p.get("name")) in us_symbols]
+
+            # For weekly and 3m, show detailed; for others, compact
+            if bucket_key in ("weeks", "3m"):
+                if india_picks:
+                    lines.extend(render_picks(f"🇮🇳 {bucket_label} India", india_picks, "INR"))
+                    lines.append("")
+                if us_picks:
+                    lines.extend(render_picks(f"🇺🇸 {bucket_label} US", us_picks, "USD"))
+                    lines.append("")
+            else:
+                # Compact summary
+                names = [p.get("name") or p.get("symbol", "?") for p in bucket_picks[:5]]
+                lines.append(f"<b>{bucket_label}:</b> {', '.join(names)}")
+
+        if any(buckets.get(k) for k in ("6m", "9m", "12m")):
+            lines.append("")
+
+        # Gold
+        gold = gold_data or picks_data.get("gold")
+        if gold:
+            lines.append("🪙 <b>Gold Setup</b>")
+            usd_price = gold.get("usd", {}).get("price") or gold.get("priceUSD", 0)
+            inr_price = gold.get("inr", {}).get("pricePer10g") or gold.get("priceINR", 0)
+            lines.append(f"   USD: ${usd_price:,.0f} | INR: ₹{inr_price:,.0f}/10g")
+            signal = gold.get("signal") or gold.get("recommendation", "HOLD")
+            reason = gold.get("signalReason") or gold.get("reason", "")
+            lines.append(f"   Signal: {signal}{f' — {reason}' if reason else ''}")
+            entry = gold.get("entry") or usd_price
+            target = gold.get("target") or round(entry * 1.08)
+            sl = gold.get("stopLoss") or round(entry * 0.95)
+            lines.append(f"   Entry: ${entry:,.0f} → Target: ${target:,.0f} | SL: ${sl:,.0f}")
+            fib_floor = gold.get("fibFloor")
+            if fib_floor:
+                lines.append(f"   Fib Floor: ${fib_floor:,.0f}")
+            lines.append("")
+
+        # Today's paper trades
+        try:
+            from db.client import get_trades_today
+            trades = await get_trades_today()
+            if trades:
+                open_trades = [t for t in trades if t.get("status") == "OPEN"]
+                closed_trades = [t for t in trades if t.get("status") in ("CLOSED", "STOPPED_OUT")]
+                total_pnl = sum(float(t.get("pnl", 0) or 0) for t in closed_trades)
+
+                lines.append("📈 <b>Today's Paper Trades</b>")
+                if open_trades:
+                    lines.append(f"   Open: {len(open_trades)}")
+                    for t in open_trades[:3]:
+                        lines.append(f"   • {t['symbol']} @ ₹{float(t.get('entry_price', 0)):.2f}")
+                if closed_trades:
+                    pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
+                    lines.append(f"   Closed: {len(closed_trades)} | PnL: {pnl_emoji} ₹{total_pnl:+.2f}")
+                lines.append("")
+        except Exception:
+            pass  # No trades info is fine
+
+        lines.append(f"<i>Generated by TradeX AI Engine</i>")
+        return "\n".join(lines)
+
+    async def send_daily_brief(self) -> bool:
+        """Send the daily brief to the configured chat. Called by scheduler."""
+        if not self.enabled or not self.chat_id:
+            logger.warning("Cannot send daily brief: bot disabled or no chat_id")
+            return False
+
+        try:
+            brief = await self._build_daily_brief()
+            if brief:
+                return await self.send_message(brief)
+            else:
+                logger.warning("Daily brief returned empty — API may be down")
+                return False
+        except Exception as e:
+            logger.error(f"Daily brief send failed: {e}", exc_info=True)
+            return False
 
     # ─── Notification Methods ───────────────────────────────────
 

@@ -244,21 +244,32 @@ function buildMessage(data: any, gold: any, macro: any): string {
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 export async function GET(req: Request) {
-  // Verify cron secret (Vercel sends this header)
+  // Verify cron secret if set (Vercel Pro sends this; hobby plan may not)
   const authHeader = req.headers.get("authorization");
-  if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {
+  if (CRON_SECRET && authHeader && authHeader !== `Bearer ${CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
     const baseUrl = new URL(req.url).origin;
+    console.log(`[cron] Starting daily picks job at ${new Date().toISOString()}, baseUrl: ${baseUrl}`);
 
-    // Fetch all data in parallel
+    // Fetch all data in parallel with individual timeouts
+    const fetchWithTimeout = (url: string, timeoutMs = 25000) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      return fetch(url, { cache: "no-store", signal: controller.signal })
+        .then((r) => { clearTimeout(timer); return r.json(); })
+        .catch((e) => { clearTimeout(timer); console.error(`[cron] Fetch failed: ${url}`, e.message); return null; });
+    };
+
     const [picksRes, goldRes, macroRes] = await Promise.all([
-      fetch(`${baseUrl}/api/market/picks`, { cache: "no-store" }).then((r) => r.json()).catch(() => null),
-      fetch(`${baseUrl}/api/market/gold`, { cache: "no-store" }).then((r) => r.json()).catch(() => null),
-      fetch(`${baseUrl}/api/market/macro`, { cache: "no-store" }).then((r) => r.json()).catch(() => null),
+      fetchWithTimeout(`${baseUrl}/api/market/picks`),
+      fetchWithTimeout(`${baseUrl}/api/market/gold`),
+      fetchWithTimeout(`${baseUrl}/api/market/macro`),
     ]);
+
+    console.log(`[cron] Data fetched — picks: ${!!picksRes}, gold: ${!!goldRes}, macro: ${!!macroRes}`);
 
     const message = buildMessage(picksRes, goldRes, macroRes);
 
