@@ -167,10 +167,12 @@ class DhanBroker:
             return []
 
     async def get_ltp(self, symbol: str, exchange: str = "NSE") -> float | None:
-        """Get last traded price via Dhan market quotes."""
+        """Get last traded price via Dhan market quotes, with Yahoo Finance fallback."""
         security_id = DHAN_SECURITY_IDS.get(symbol)
         if not security_id or not self._initialized:
-            return None
+            # Fallback to Yahoo Finance for paper trading
+            return await self._yahoo_ltp(symbol)
+
 
         # Primary: use quote_data for real-time LTP
         try:
@@ -221,7 +223,9 @@ class DhanBroker:
         except Exception as e:
             logger.error(f"Dhan intraday_minute_data failed for {symbol}: {e}")
 
-        return None
+        # All Dhan methods failed — try Yahoo Finance as last resort
+        logger.debug(f"All Dhan LTP methods failed for {symbol}, trying Yahoo Finance")
+        return await self._yahoo_ltp(symbol)
 
     # --- Helpers ---
 
@@ -233,6 +237,26 @@ class DhanBroker:
             "SLM": self._dhan.SLM,
         }
         return mapping.get(price_type.upper(), self._dhan.MARKET)
+
+    async def _yahoo_ltp(self, symbol: str) -> float | None:
+        """Fallback: get LTP from Yahoo Finance (for paper trading without Dhan)."""
+        import aiohttp
+        yahoo_sym = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_sym}?interval=1d&range=5d"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    if resp.status != 200:
+                        return None
+                    data = await resp.json()
+                    result = data.get("chart", {}).get("result", [{}])[0]
+                    price = result.get("meta", {}).get("regularMarketPrice")
+                    if price:
+                        logger.debug(f"Yahoo LTP for {symbol}: ₹{price:.2f}")
+                        return float(price)
+        except Exception as e:
+            logger.debug(f"Yahoo LTP fallback failed for {symbol}: {e}")
+        return None
 
     async def close(self):
         """Cleanup (noop for SDK-based client)."""

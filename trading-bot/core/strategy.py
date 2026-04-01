@@ -259,6 +259,41 @@ class HybridStrategy:
             if response and response.get("data"):
                 return candles_from_dhan_data(response["data"])
         except Exception as e:
-            logger.error(f"Failed to fetch candles for {symbol}: {e}")
+            logger.error(f"Failed to fetch candles for {symbol} via Dhan: {e}")
 
-        return None
+        # Fallback: Yahoo Finance for paper trading
+        return await self._yahoo_candles(symbol)
+
+    async def _yahoo_candles(self, symbol: str) -> Any:
+        """Fallback: fetch daily candles from Yahoo Finance for RSI computation."""
+        import aiohttp
+        import pandas as pd
+
+        yahoo_sym = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_sym}?interval=1d&range=1mo"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                    if resp.status != 200:
+                        return None
+                    data = await resp.json()
+                    result = data.get("chart", {}).get("result", [{}])[0]
+                    timestamps = result.get("timestamp", [])
+                    quote = result.get("indicators", {}).get("quote", [{}])[0]
+                    if not timestamps or not quote:
+                        return None
+                    df = pd.DataFrame({
+                        "open": quote.get("open", []),
+                        "high": quote.get("high", []),
+                        "low": quote.get("low", []),
+                        "close": quote.get("close", []),
+                        "volume": quote.get("volume", []),
+                    })
+                    df = df.dropna(subset=["close"])
+                    if len(df) < 15:
+                        return None
+                    logger.debug(f"Yahoo candles for {symbol}: {len(df)} rows")
+                    return df
+        except Exception as e:
+            logger.debug(f"Yahoo candles fallback failed for {symbol}: {e}")
+            return None
