@@ -586,147 +586,232 @@ class TelegramBot:
     # ─── Daily Brief Builder ─────────────────────────────────────
 
     async def _build_daily_brief(self) -> str | None:
-        """Fetch picks from TradeX API and format a rich daily brief with LTP."""
-        TRADEX_API = "https://tradex-ivory.vercel.app/api/market"
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            # Fetch picks, gold, macro in parallel
-            results = await asyncio.gather(
-                client.get(f"{TRADEX_API}/picks"),
-                client.get(f"{TRADEX_API}/gold"),
-                client.get(f"{TRADEX_API}/macro"),
-                return_exceptions=True,
-            )
-
-            picks_data = results[0].json() if not isinstance(results[0], Exception) and results[0].status_code == 200 else None
-            gold_data = results[1].json() if not isinstance(results[1], Exception) and results[1].status_code == 200 else None
-            macro_data = results[2].json() if not isinstance(results[2], Exception) and results[2].status_code == 200 else None
-
-        if not picks_data:
-            return None
-
+        """Build daily brief directly from Yahoo Finance data."""
+        import aiohttp
         from datetime import datetime
         from zoneinfo import ZoneInfo
+
         ist = ZoneInfo("Asia/Kolkata")
         now = datetime.now(ist)
         date_str = now.strftime("%a, %d %b %Y")
         time_str = now.strftime("%I:%M %p")
 
+        # Nifty 50 watchlist (top liquid stocks)
+        NIFTY_STOCKS = [
+            "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
+            "HINDUNILVR", "ITC", "SBIN", "BHARTIARTL", "KOTAKBANK",
+            "LT", "AXISBANK", "BAJFINANCE", "MARUTI", "TITAN",
+            "SUNPHARMA", "TATAMOTORS", "WIPRO", "HCLTECH", "ADANIENT",
+            "NTPC", "ONGC", "POWERGRID", "COALINDIA", "TATASTEEL",
+            "ULTRACEMCO", "NESTLEIND", "BAJAJFINSV", "TECHM", "JSWSTEEL",
+        ]
+
+        async def yahoo_chart(symbol: str, session: aiohttp.ClientSession) -> dict | None:
+            """Fetch 1Y daily chart from Yahoo Finance."""
+            yahoo_sym = f"{symbol}.NS"
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_sym}?interval=1d&range=1y"
+            try:
+                async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                    if resp.status != 200:
+                        return None
+                    data = await resp.json()
+                    result = data.get("chart", {}).get("result", [{}])[0]
+                    meta = result.get("meta", {})
+                    closes = result.get("indicators", {}).get("quote", [{}])[0].get("close", [])
+                    closes = [c for c in closes if c is not None]
+                    if not closes:
+                        return None
+
+                    price = meta.get("regularMarketPrice", closes[-1])
+                    high_52w = max(closes)
+                    low_52w = min(closes)
+
+                    # RSI-14
+                    rsi = None
+                    if len(closes) >= 15:
+                        gains, losses = [], []
+                        for j in range(1, min(15, len(closes))):
+                            diff = closes[-j] - closes[-j - 1]
+                            if diff > 0:
+                                gains.append(diff)
+                            else:
+                                losses.append(abs(diff))
+                        avg_gain = sum(gains) / 14 if gains else 0.001
+                        avg_loss = sum(losses) / 14 if losses else 0.001
+                        rs = avg_gain / avg_loss
+                        rsi = 100 - (100 / (1 + rs))
+
+                    # DMA 50/200
+                    dma50 = sum(closes[-50:]) / min(50, len(closes)) if len(closes) >= 50 else None
+                    dma200 = sum(closes[-200:]) / min(200, len(closes)) if len(closes) >= 200 else None
+
+                    # Fibonacci levels
+                    fib_range = high_52w - low_52w
+                    fib_levels = {
+                        "fib236": high_52w - fib_range * 0.236,
+                        "fib382": high_52w - fib_range * 0.382,
+                        "fib50": high_52w - fib_range * 0.5,
+                        "fib618": high_52w - fib_range * 0.618,
+                        "fib786": high_52w - fib_range * 0.786,
+                    }
+                    # Find nearest support below price (fib floor)
+                    supports = sorted([v for v in fib_levels.values() if v < price], reverse=True)
+                    fib_floor = supports[0] if supports else low_52w
+
+                    return {
+                        "symbol": symbol,
+                        "price": round(price, 2),
+                        "rsi": round(rsi, 1) if rsi else None,
+                        "dma50": round(dma50, 2) if dma50 else None,
+                        "dma200": round(dma200, 2) if dma200 else None,
+                        "high52w": round(high_52w, 2),
+                        "low52w": round(low_52w, 2),
+                        "fibFloor": round(fib_floor, 2),
+                        "fibLevels": {k: round(v, 2) for k, v in fib_levels.items()},
+                    }
+            except Exception as e:
+                logger.debug(f"Yahoo chart failed for {symbol}: {e}")
+                return None
+
+        # Fetch all stocks + gold + macro indicators
+        async with aiohttp.ClientSession() as session:
+            # Batch: stocks + gold + VIX/DXY
+            tasks = [yahoo_chart(s, session) for s in NIFTY_STOCKS]
+
+            # Gold (GC=F) and USDINR
+            async def fetch_quote(sym: str) -> dict | None:
+                url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=5d"
+                try:
+                    async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                        if resp.status != 200:
+                            return None
+                        data = await resp.json()
+                        meta = data.get("chart", {}).get("result", [{}])[0].get("meta", {})
+                        return {"symbol": sym, "price": meta.get("regularMarketPrice", 0)}
+                except Exception:
+                    return None
+
+            tasks.extend([fetch_quote("GC=F"), fetch_quote("USDINR=X"), fetch_quote("^VIX"), fetch_quote("DX-Y.NYB")])
+            all_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Parse results
+        stock_results = []
+        for r in all_results[:len(NIFTY_STOCKS)]:
+            if isinstance(r, dict) and r:
+                stock_results.append(r)
+
+        gold_usd = all_results[len(NIFTY_STOCKS)]
+        usdinr = all_results[len(NIFTY_STOCKS) + 1]
+        vix_data = all_results[len(NIFTY_STOCKS) + 2]
+        dxy_data = all_results[len(NIFTY_STOCKS) + 3]
+
+        if not stock_results:
+            return None
+
+        # Score stocks for different horizons
+        def score_weekly(s: dict) -> float:
+            """Weekly: favor momentum plays with RSI 45-65, above 50DMA."""
+            score = 0
+            rsi = s.get("rsi")
+            if rsi:
+                if 45 <= rsi <= 65:
+                    score += 40
+                elif 30 <= rsi < 45:
+                    score += 25
+            if s.get("dma50") and s["price"] > s["dma50"]:
+                score += 30
+            if s.get("dma200") and s["price"] > s["dma200"]:
+                score += 15
+            # Near fib support bonus
+            if s.get("fibFloor"):
+                dist = (s["price"] - s["fibFloor"]) / s["price"] * 100
+                if 0 < dist < 3:
+                    score += 15
+            return score
+
+        def score_longterm(s: dict) -> float:
+            """6-12M: favor oversold recovery plays, near 52w low."""
+            score = 0
+            rsi = s.get("rsi")
+            if rsi:
+                if rsi < 35:
+                    score += 40
+                elif rsi < 45:
+                    score += 25
+            # Distance from 52w low
+            if s.get("low52w") and s["price"] > 0:
+                dist_from_low = (s["price"] - s["low52w"]) / s["price"] * 100
+                if dist_from_low < 15:
+                    score += 30
+                elif dist_from_low < 30:
+                    score += 15
+            if s.get("dma200") and s["price"] < s["dma200"]:
+                score += 15  # Below 200DMA = potential recovery
+            return score
+
+        # Generate picks
+        weekly_picks = sorted(stock_results, key=score_weekly, reverse=True)[:5]
+        longterm_picks = sorted(stock_results, key=score_longterm, reverse=True)[:5]
+
+        # Build message
         lines = [
             "📊 <b>TradeX Daily Brief</b>",
             f"📅 {date_str} | {time_str} IST",
             "",
         ]
 
-        # Macro regime
-        if macro_data:
-            regime = macro_data.get("regime", "UNKNOWN").replace("_", " ")
-            lines.append(f"🌐 <b>Market Regime:</b> {regime}")
-            signals = macro_data.get("signals", [])
-            if signals:
-                bullish = sum(1 for s in signals if s.get("signal") == "BULLISH")
-                bearish = sum(1 for s in signals if s.get("signal") == "BEARISH")
-                lines.append(f"   Bullish: {bullish} | Bearish: {bearish}")
-
-                # Key macro values
-                parts = []
-                for s in signals:
-                    name = s.get("name", "")
-                    val = s.get("value") or s.get("price")
-                    if val and name in ("DXY", "Dollar Index", "VIX", "US VIX"):
-                        parts.append(f"{name}: {val}")
-                    elif val and "10Y" in name:
-                        parts.append(f"10Y: {val}%")
-                if parts:
-                    lines.append(f"   {' | '.join(parts)}")
+        # Macro overview
+        macro_parts = []
+        if isinstance(vix_data, dict) and vix_data:
+            macro_parts.append(f"VIX: {vix_data['price']:.1f}")
+        if isinstance(dxy_data, dict) and dxy_data:
+            macro_parts.append(f"DXY: {dxy_data['price']:.1f}")
+        if macro_parts:
+            lines.append(f"🌐 <b>Macro:</b> {' | '.join(macro_parts)}")
             lines.append("")
 
-        # Helper to format pick lines
-        def fmt_inr(v: float) -> str:
-            return f"₹{v:,.0f}"
+        # Weekly picks
+        lines.append("🇮🇳 <b>📅 Weekly Picks</b>")
+        for i, s in enumerate(weekly_picks, 1):
+            price = s["price"]
+            target = round(price * 1.05, 2)  # 5% target for weekly
+            sl = round(price * 0.97, 2)  # 3% SL for weekly
+            rsi_str = f" | RSI: {s['rsi']}" if s.get("rsi") else ""
+            fib_str = f" | Fib Floor: ₹{s['fibFloor']:,.0f}" if s.get("fibFloor") else ""
+            setup = "Momentum" if (s.get("rsi") or 50) >= 45 else "Oversold Bounce"
+            signal_emoji = "🟢" if (s.get("rsi") or 50) < 65 else "🟡"
 
-        def fmt_usd(v: float) -> str:
-            return f"${v:,.0f}"
+            lines.append(f"{i}. <b>{s['symbol']}</b> {signal_emoji} {setup}")
+            lines.append(f"   LTP: ₹{price:,.2f} → Target: ₹{target:,.0f} (+5%) | SL: ₹{sl:,.0f} (-3%)")
+            lines.append(f"   {rsi_str.lstrip(' | ')}{fib_str}")
+        lines.append("")
 
-        def render_picks(title: str, picks: list, currency: str = "INR") -> list[str]:
-            if not picks:
-                return []
-            fmt = fmt_inr if currency == "INR" else fmt_usd
-            out = [f"<b>{title}</b>"]
-            for i, p in enumerate(picks[:5], 1):
-                name = (p.get("name") or p.get("symbol", ""))[:20]
-                price = p.get("price", 0)
-                target = p.get("target", 0)
-                target_pct = p.get("targetPct", 0)
-                sl = p.get("stopLoss", 0)
-                sl_pct = p.get("stopLossPct", 0)
-                rsi = p.get("rsi")
-                fib_floor = p.get("fibFloor")
-                setup = p.get("setupType", "")
-                signal = p.get("signal", "")
+        # Long-term picks
+        lines.append("🇮🇳 <b>📅 6-12 Month Picks</b>")
+        for i, s in enumerate(longterm_picks, 1):
+            price = s["price"]
+            target = round(price * 1.20, 2)  # 20% target
+            sl = round(price * 0.90, 2)  # 10% SL
+            rsi_str = f" | RSI: {s['rsi']}" if s.get("rsi") else ""
+            fib_str = f" | Fib Floor: ₹{s['fibFloor']:,.0f}" if s.get("fibFloor") else ""
+            setup = "Recovery Play" if (s.get("rsi") or 50) < 40 else "Value Buy"
 
-                out.append(f"{i}. <b>{name}</b> {'🟢' if signal == 'BUY' else '🟡' if signal == 'HOLD' else '🔴'} {setup}")
-                out.append(f"   LTP: {fmt(price)} | Entry: {fmt(price)} → Target: {fmt(target)} (+{target_pct}%)")
-                out.append(f"   SL: {fmt(sl)} (-{sl_pct}%)")
-                extras = []
-                if fib_floor:
-                    extras.append(f"Fib Floor: {fmt(fib_floor)}")
-                if rsi:
-                    extras.append(f"RSI: {rsi:.1f}")
-                if extras:
-                    out.append(f"   {' | '.join(extras)}")
-            return out
-
-        # Buckets
-        buckets = picks_data.get("buckets", {})
-        all_india = picks_data.get("allIndia", [])
-        all_us = picks_data.get("allUS", [])
-
-        # Determine India vs US picks in each bucket
-        india_symbols = {p.get("symbol") or p.get("name") for p in all_india}
-        us_symbols = {p.get("symbol") or p.get("name") for p in all_us}
-
-        for bucket_key, bucket_label in [("weeks", "📅 Weekly"), ("3m", "📅 3-Month"), ("6m", "📅 6-Month"), ("9m", "📅 9-Month"), ("12m", "📅 12-Month")]:
-            bucket_picks = buckets.get(bucket_key, [])
-            if not bucket_picks:
-                continue
-
-            india_picks = [p for p in bucket_picks if (p.get("symbol") or p.get("name")) in india_symbols]
-            us_picks = [p for p in bucket_picks if (p.get("symbol") or p.get("name")) in us_symbols]
-
-            # For weekly and 3m, show detailed; for others, compact
-            if bucket_key in ("weeks", "3m"):
-                if india_picks:
-                    lines.extend(render_picks(f"🇮🇳 {bucket_label} India", india_picks, "INR"))
-                    lines.append("")
-                if us_picks:
-                    lines.extend(render_picks(f"🇺🇸 {bucket_label} US", us_picks, "USD"))
-                    lines.append("")
-            else:
-                # Compact summary
-                names = [p.get("name") or p.get("symbol", "?") for p in bucket_picks[:5]]
-                lines.append(f"<b>{bucket_label}:</b> {', '.join(names)}")
-
-        if any(buckets.get(k) for k in ("6m", "9m", "12m")):
-            lines.append("")
+            lines.append(f"{i}. <b>{s['symbol']}</b> 🟢 {setup}")
+            lines.append(f"   LTP: ₹{price:,.2f} → Target: ₹{target:,.0f} (+20%) | SL: ₹{sl:,.0f} (-10%)")
+            lines.append(f"   {rsi_str.lstrip(' | ')}{fib_str}")
+        lines.append("")
 
         # Gold
-        gold = gold_data or picks_data.get("gold")
-        if gold:
+        if isinstance(gold_usd, dict) and gold_usd and isinstance(usdinr, dict) and usdinr:
+            gold_price = gold_usd["price"]
+            fx_rate = usdinr["price"]
+            inr_per_10g = round(gold_price * fx_rate / 31.1035 * 10, 0)
+            gold_target = round(gold_price * 1.08, 0)
+            gold_sl = round(gold_price * 0.95, 0)
+
             lines.append("🪙 <b>Gold Setup</b>")
-            usd_price = gold.get("usd", {}).get("price") or gold.get("priceUSD", 0)
-            inr_price = gold.get("inr", {}).get("pricePer10g") or gold.get("priceINR", 0)
-            lines.append(f"   USD: ${usd_price:,.0f} | INR: ₹{inr_price:,.0f}/10g")
-            signal = gold.get("signal") or gold.get("recommendation", "HOLD")
-            reason = gold.get("signalReason") or gold.get("reason", "")
-            lines.append(f"   Signal: {signal}{f' — {reason}' if reason else ''}")
-            entry = gold.get("entry") or usd_price
-            target = gold.get("target") or round(entry * 1.08)
-            sl = gold.get("stopLoss") or round(entry * 0.95)
-            lines.append(f"   Entry: ${entry:,.0f} → Target: ${target:,.0f} | SL: ${sl:,.0f}")
-            fib_floor = gold.get("fibFloor")
-            if fib_floor:
-                lines.append(f"   Fib Floor: ${fib_floor:,.0f}")
+            lines.append(f"   USD: ${gold_price:,.0f} | INR: ₹{inr_per_10g:,.0f}/10g")
+            lines.append(f"   Entry: ${gold_price:,.0f} → Target: ${gold_target:,.0f} (+8%) | SL: ${gold_sl:,.0f} (-5%)")
             lines.append("")
 
         # Today's paper trades
@@ -748,9 +833,9 @@ class TelegramBot:
                     lines.append(f"   Closed: {len(closed_trades)} | PnL: {pnl_emoji} ₹{total_pnl:+.2f}")
                 lines.append("")
         except Exception:
-            pass  # No trades info is fine
+            pass
 
-        lines.append(f"<i>Generated by TradeX AI Engine</i>")
+        lines.append("<i>Generated by TradeX AI Engine</i>")
         return "\n".join(lines)
 
     async def send_daily_brief(self) -> bool:
